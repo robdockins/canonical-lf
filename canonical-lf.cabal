@@ -13,7 +13,7 @@ library
   hs-source-dirs: src
   exposed-modules:
     Lang.LF
-  internal-modules:
+  other-modules:
     Lang.LF.Model
   build-depends:
     base >= 4.8 && < 5,
