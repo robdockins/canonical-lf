@@ -1,9 +1,5 @@
 module Lang.LF.Model where
 
-import           Data.Sequence (Seq, (<|) )
-import qualified Data.Sequence as Seq
-import           Data.Set (Set)
-import qualified Data.Set as Set
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
 import           Lang.LF.ChangeT
@@ -43,9 +39,7 @@ data SimpleType a
   = SConst !a
   | SArrow !(SimpleType a) !(SimpleType a)
 
-type Ctx f = Seq (f TYPE)
-
-class (Ord a, Ord c, Pretty a, Pretty c, Monad m) => LFModel (f :: SORT -> *) a c m | f -> a c m where
+class (Ord a, Ord c, Pretty a, Pretty c, Monad m) => LFModel (f :: SORT -> *) a c m | f -> a c m, m -> f a c where
   unfoldLF :: f s -> LF f a c s
   foldLF :: LF f a c s  -> m (f s)
   constKind :: a -> m (f KIND)
@@ -56,16 +50,22 @@ class (Ord a, Ord c, Pretty a, Pretty c, Monad m) => LFModel (f :: SORT -> *) a 
          -> f s
          -> ChangeT m (f s)
 
-  ppLF :: Set String -> Seq Doc -> f s -> m Doc
-  validateKind :: Ctx f -> f KIND -> m ()
-  validateType :: Ctx f -> f TYPE -> m ()
-  inferKind :: Ctx f -> f ATYPE -> m (f KIND)
-  inferType :: Ctx f -> f TERM -> m (f TYPE)
-  inferAType :: Ctx f -> f ATERM -> m (f TYPE)
+  extendContext :: String -> f TYPE -> m x -> m x
+  lookupVariable :: Int -> m (f TYPE)
+  lookupVariableName :: Int -> m String
+  freshName :: String -> m String
+
+  ppLF :: Prec -> f s -> m Doc
+  validateKind :: f KIND -> m ()
+  validateType :: f TYPE -> m ()
+  inferKind :: f ATYPE -> m (f KIND)
+  inferType :: f TERM -> m (f TYPE)
+  inferAType :: f ATERM -> m (f TYPE)
   alphaEq :: f s -> f s -> m Bool
   headConstant :: f TYPE -> m a
   weaken :: Int -> Int -> f s -> ChangeT m (f s)
   freeVar :: Int -> f s -> Bool
+  contextDepth :: m Int
 
 lf_type :: LFModel f a c m => m (f KIND)
 lf_type = foldLF Type
@@ -78,6 +78,43 @@ tyPi nm a1 a2 = foldLF =<< (TyPi nm <$> a1 <*> a2)
 
 infixr 5 ==>
 infixl 2 @@
+
+autoVar :: LFModel f a c m => m (m (f TERM))
+autoVar = do
+  startDepth <- contextDepth
+  return $ do
+    endDepth <- contextDepth
+    if (endDepth > startDepth) then
+      var (endDepth - startDepth - 1)
+    else
+      fail $ "automatic variable escaped its scope!"
+
+λ :: LFModel f a c m => String -> m (f TYPE) -> (m (f TERM) -> m (f TERM)) -> m (f TERM)
+λ nm tp f = do
+  tp' <- tp
+  v   <- autoVar
+  nm' <- freshName nm
+  m   <- extendContext nm' tp' $ f v
+  foldLF (Lam nm tp' m)
+
+class LFPi (s::SORT) where
+  pi :: LFModel f a c m => String -> m (f TYPE) -> (m (f TERM) -> m (f s)) -> m (f s)
+
+instance LFPi KIND where
+  pi nm tp f = do
+    tp' <- tp
+    v   <- autoVar
+    nm' <- freshName nm
+    k   <- extendContext nm' tp' $ f v
+    foldLF (KPi nm tp' k)
+
+instance LFPi TYPE where
+  pi nm tp f = do
+    tp' <- tp
+    v   <- autoVar
+    nm' <- freshName nm
+    a   <- extendContext nm' tp' $ f v
+    foldLF (TyPi nm tp' a)
 
 class LFFunc (s::SORT) where
   (==>) :: LFModel f a c m => m (f TYPE) -> m (f s) -> m (f s)
@@ -124,10 +161,10 @@ tyApp a m = do
        fail $ unwords ["Cannot apply terms to Pi Types", adoc, mdoc]
 
 displayLF :: LFModel f a c m => f s -> m String
-displayLF x = show <$> ppLF Set.empty Seq.empty x
+displayLF x = show <$> ppLF TopPrec x
 
-lam :: LFModel f a c m => String -> m (f TYPE) -> m (f TERM) -> m (f TERM)
-lam nm a m = foldLF =<< (Lam nm <$> a <*> m)
+mkLam :: LFModel f a c m => String -> m (f TYPE) -> m (f TERM) -> m (f TERM)
+mkLam nm a m = foldLF =<< (Lam nm <$> a <*> m)
 
 var :: LFModel f a c m => Int -> m (f TERM)
 var v = foldLF . ATerm =<< foldLF (Var v)
@@ -145,12 +182,11 @@ app x y = do
 
 checkType :: LFModel f a c m
           => f s
-          -> Ctx f
           -> f TERM
           -> f TYPE
           -> m ()
-checkType z ctx m a = do
-  a' <- inferType ctx m
+checkType z m a = do
+  a' <- inferType m
   q  <- alphaEq a a'
   if q then return ()
        else do
@@ -199,29 +235,29 @@ alphaEqLF x y =
     _ -> return False
 
 validateKindLF :: LFModel f a c m
-               => Ctx f
-               -> f KIND
+               => f KIND
                -> m ()
-validateKindLF ctx tm =
+validateKindLF tm =
   case unfoldLF tm of
     Type -> return ()
-    KPi _ a k -> do
-      validateType ctx a
-      validateKind (a <| ctx) k
+    KPi nm a k -> do
+      validateType a
+      nm' <- freshName nm
+      extendContext nm' a $ validateKind k
       {- subordination check -}
 
 validateTypeLF :: LFModel f a c m
-               => Ctx f
-               -> f TYPE
+               => f TYPE
                -> m ()
-validateTypeLF ctx tm =
+validateTypeLF tm =
   case unfoldLF tm of
-    TyPi _ a1 a2 -> do
-      validateType ctx a1
-      validateType (a1 <| ctx) a2
+    TyPi nm a1 a2 -> do
+      validateType a1
+      nm' <- freshName nm
+      extendContext nm' a1 $ validateType a2
 
     AType p -> do
-      k <- inferKind ctx p
+      k <- inferKind p
       case unfoldLF k of
         Type -> return ()
         _ -> do
@@ -229,30 +265,28 @@ validateTypeLF ctx tm =
           fail $ unwords ["invalid atomic type", kdoc]
 
 inferKindLF :: LFModel f a c m
-            => Ctx f
-            -> f ATYPE
+            => f ATYPE
             -> m (f KIND)
-inferKindLF ctx tm =
+inferKindLF tm =
   case unfoldLF tm of
     TyConst x -> constKind x
     TyApp p1 m2 -> do
-      k1 <- inferKind ctx p1
+      k1 <- inferKind p1
       case unfoldLF k1 of
         KPi _ a2 k1 -> do
-          checkType tm ctx m2 a2
+          checkType tm m2 a2
           runChangeT $ hsubst m2 0 (simpleType a2) k1
         _ -> do
                k1doc <- displayLF k1
                fail $ unwords ["invalid atomic type family", k1doc]
 
 inferTypeLF :: LFModel f a c m
-            => Ctx f
-            -> f TERM
+            => f TERM
             -> m (f TYPE)
-inferTypeLF ctx m =
+inferTypeLF m =
   case unfoldLF m of
     ATerm r -> do
-       a <- inferAType ctx r
+       a <- inferAType r
        case unfoldLF a of
          AType _ -> return a
          TyPi _ _ _ -> do
@@ -260,23 +294,24 @@ inferTypeLF ctx m =
              mdoc <- displayLF m
              fail $ unwords ["Term fails to be η-long:", mdoc, "::", adoc]
     Lam nm a2 m -> do
-      a1 <- inferType (a2 <| ctx) m
+      nm' <- freshName nm
+      a1 <- extendContext nm' a2 $ inferType m
       foldLF (TyPi nm a2 a1)
 
 inferATypeLF :: LFModel f a c m
-            => Ctx f
-            -> f ATERM
+            => f ATERM
             -> m (f TYPE)
-inferATypeLF ctx r =
+inferATypeLF r =
   case unfoldLF r of
-    Var i | i < Seq.length ctx -> runChangeT $ weaken 0 (i+1) (Seq.index ctx i)
-          | otherwise -> fail $ unwords ["Variable out of scope", show i]
+    Var i -> lookupVariable i
+-- | i < Seq.length ctx -> runChangeT $ weaken 0 (i+1) (Seq.index ctx i)
+--          | otherwise -> fail $ unwords ["Variable out of scope", show i]
     Const c -> constType c
     App r1 m2 -> do
-      a <- inferAType ctx r1
+      a <- inferAType r1
       case unfoldLF a of
         TyPi _ a2 a1 -> do
-          checkType r ctx m2 a2
+          checkType r m2 a2
           runChangeT $ hsubst m2 0 (simpleType a2) a1
         _ -> do adoc <- displayLF a
                 fail $ unwords ["Expected function type", adoc]
@@ -391,72 +426,59 @@ data Prec
   | BinderPrec
  deriving (Eq)
 
-getName :: Set String
-        -> String
-        -> (String, Set String)
-getName ss nm = tryName ss (nm : [ nm++show i | i <- [0..] ])
- where
-  tryName ss (x:xs)
-    | Set.member x ss = tryName ss xs
-    | otherwise = (x, Set.insert x ss)
-  tryName _ [] = undefined
-
 prettyLF
       :: LFModel f a c m
-      => Set String
-      -> Seq Doc
-      -> Prec
+      => Prec
       -> f s
-      -> Doc
-prettyLF usedNames nameScope prec x =
+      -> m Doc
+prettyLF prec x =
   case unfoldLF x of
-    Type -> text "Type"
+    Type -> return $ text "Type"
     KPi nm a k
-      | freeVar 0 k ->
-         let (nm', usedNames') = getName usedNames nm in
-         (if prec /= TopPrec then parens else id) $
-         text "Π" <> text nm' <+> colon <+>
-           prettyLF usedNames nameScope BinderPrec a <> comma <+>
-           prettyLF usedNames' (text nm' <| nameScope) TopPrec k
-      | otherwise ->
-         (if prec /= TopPrec then parens else id) $
-           prettyLF usedNames nameScope BinderPrec a <+>
-           text "⇒" <+>
-           prettyLF usedNames (error "unbound name!" <| nameScope) TopPrec k
-    AType x -> prettyLF usedNames nameScope prec x
+      | freeVar 0 k -> do
+         nm' <- freshName nm
+         adoc <- ppLF BinderPrec a
+         kdoc <- extendContext nm' a $ ppLF TopPrec k
+         return $ (if prec /= TopPrec then parens else id) $
+           text "Π" <> text nm' <+> colon <+> adoc <+> comma <+> kdoc
+      | otherwise -> do
+         adoc <- ppLF BinderPrec a
+         kdoc <- extendContext "_" (error "unbound name!") $ ppLF TopPrec k
+         return $ (if prec /= TopPrec then parens else id) $
+           adoc <+> text "⇒" <+> kdoc
+    AType x -> ppLF prec x
     TyPi nm a1 a2
-      | freeVar 0 a2 ->
-         let (nm', usedNames') = getName usedNames nm in
-         (if prec /= TopPrec then parens else id) $
-         text "Π" <> text nm <+> colon <+>
-           prettyLF usedNames nameScope BinderPrec a1 <> comma <+>
-           prettyLF usedNames' (text nm' <| nameScope) TopPrec a2
-      | otherwise ->
-         (if prec /= TopPrec then parens else id) $
-           prettyLF usedNames nameScope BinderPrec a1 <+>
-           text "⇒" <+>
-           prettyLF usedNames (error "unbound name!" <| nameScope) TopPrec a2
-
-    TyConst x -> pretty x
-    TyApp p a ->
-         (if prec == AppRPrec then parens else id) $
-         prettyLF usedNames nameScope AppLPrec p <+>
-         prettyLF usedNames nameScope AppRPrec a
-    ATerm x -> prettyLF usedNames nameScope prec x
-    Lam nm a m ->
-         let (nm', usedNames') = getName usedNames nm in
-         (if prec /= TopPrec then parens else id) $
-         text "λ" <> text nm' <+> colon <+>
-           prettyLF usedNames nameScope BinderPrec a <> comma <+>
-           prettyLF usedNames' (text nm' <| nameScope) TopPrec m
-    Const x -> pretty x
-    App m1 m2 ->
-         (if prec == AppRPrec then parens else id) $
-         prettyLF usedNames nameScope AppLPrec m1 <+>
-         prettyLF usedNames nameScope AppRPrec m2
-    Var v
-       | v < Seq.length nameScope -> Seq.index nameScope v
-       | otherwise -> text ("$" ++ show v)
+      | freeVar 0 a2 -> do
+         nm' <- freshName nm
+         a1doc <- ppLF BinderPrec a1
+         a2doc <- extendContext nm' a1 $ ppLF TopPrec a2
+         return $ (if prec /= TopPrec then parens else id) $
+           text "Π" <> text nm' <+> colon <+> a1doc <> comma <+> a2doc
+      | otherwise -> do
+         a1doc <- ppLF BinderPrec a1
+         a2doc <- extendContext "_" (error "unbound name!") $ ppLF TopPrec a2
+         return $! (if prec /= TopPrec then parens else id) $
+           a1doc <+> text "⇒" <+> a2doc
+    TyConst x -> return $ pretty x
+    TyApp p a -> do
+         pdoc <- ppLF AppLPrec p
+         adoc <- ppLF AppRPrec a
+         return $! (if prec == AppRPrec then parens else id) $
+            pdoc <+> adoc
+    ATerm x -> ppLF prec x
+    Lam nm a m -> do
+         nm' <- freshName nm
+         adoc <- ppLF BinderPrec a
+         mdoc <- extendContext nm' a $ ppLF TopPrec m
+         return $! (if prec /= TopPrec then parens else id) $
+           text "λ" <> text nm' <+> colon <+> adoc <> comma <+> mdoc
+    Const x -> return $ pretty x
+    App m1 m2 -> do
+         m1doc <- ppLF AppLPrec m1
+         m2doc <- ppLF AppRPrec m2
+         return $! (if prec == AppRPrec then parens else id) $
+            m1doc <+> m2doc
+    Var v -> text <$> lookupVariableName v
 
 freeVarLF :: LFModel f a c m
           => Int

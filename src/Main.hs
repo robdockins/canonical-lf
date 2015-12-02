@@ -1,81 +1,148 @@
 {-# OPTIONS_GHC -Wwarn #-}
 module Main where
 
-import           Control.Monad.Except
-import           Control.Monad.Reader
-import qualified Data.Sequence as Seq
-import qualified Data.Set as Set
+import Prelude hiding (pi, abs)
 
 import           Lang.LF
-import           Lang.LF.Tree
+import           Lang.LF.Tree hiding (M)
+import qualified Lang.LF.Tree as Tree
 
 
-type LF = LFTree String String
-type Sig = Signature String String
-type M = ReaderT Sig (Except String)
+type LF = Tree.LFTree String String
+type Sig = Tree.Signature String String
+type M = Tree.M String String
 
 sig :: Sig
 sig = buildSignature
-  [ TypeDecl "tm" lf_type
-  , TypeDecl "tp" lf_type
+  [ -- STLC type formers
+    "tp"      ::. lf_type
+  , "arrow"    :. tp ==> tp ==> tp
+  , "nat"      :. tp
 
-  , TermDecl "arrow" $ tp ==> tp ==> tp
-  , TermDecl "nat" $ tp
+    -- STLC term formers
+  , "tm"      ::. lf_type
+  , "zero"     :. tm
+  , "suc"      :. tm ==> tm
+  , "app"      :. tm ==> tm ==> tm
+  , "lam"      :. tp ==> (tm ==> tm) ==> tm
+  , "nat_elim" :. tp ==> tm ==> tm ==> tm ==> tm
 
-  , TermDecl "app" $ tm ==> tm ==> tm
-  , TermDecl "abs" $ tp ==> (tm ==> tm) ==> tm
-  , TermDecl "S" $ tm ==> tm
-  , TermDecl "Z" $ tm
+    -- STLC typing judgements
+  , "typeof" ::. tm ==> tp ==> lf_type
+  , "of_zero" :.
+         typeof zero nat
+  , "of_suc" :.
+         pi "n" tm $ \n ->
+           typeof n nat ==>
+           typeof (suc n) nat
+  , "of_app" :.
+         pi "e₁" tm $ \e1 ->
+         pi "e₂" tm $ \e2 ->
+         pi "t₂" tp $ \t2 ->
+         pi "t"  tp $ \t ->
+           typeof e1 (arrow t2 t) ==>
+           typeof e2 t2 ==>
+           typeof (app e1 e2) t
+  , "of_lam" :.
+         pi "t₂" tp $ \t2 ->
+         pi "t"  tp $ \t ->
+         pi "f" (tm ==> tm) $ \f ->
+           (pi "x" tm $ \x ->
+              typeof x t2 ==> typeof (f @@ x) t)
+           ==>
+           typeof (lam t2 (λ"x" tm (\x -> f @@ x))) (arrow t2 t)
+  , "of_nat_elim" :.
+         pi "t" tp $ \t ->
+         pi "z" tm $ \z ->
+         pi "s" tm $ \s ->
+         pi "n" tm $ \n ->
+           typeof z t ==>
+           typeof s (arrow t t) ==>
+           typeof n nat ==>
+           typeof (nat_elim t z s n) t
 
-  , TypeDecl "typeof" $ tm ==> tp ==> lf_type
-  , TermDecl "of_Z" $ typeof zero nat
-  , TermDecl "of_S" $ tyPi "n" tm $ typeof (var 0) nat
-                                ==> typeof (suc (var 0)) nat
-  , TermDecl "of_app" $ tyPi "e₁" tm $ tyPi "e₂" tm $ tyPi "t₂" tp $ tyPi "t" tp $
-                            typeof (var 3) (arrow (var 1) (var 0)) ==>
-                            typeof (var 2) (var 1) ==>
-                            typeof (obApp (var 3) (var 2)) (var 0)
-  , TermDecl "of_lam" $ tyPi "t₂" tp $ tyPi "t" tp $ tyPi "f" (tm ==> tm) $
-                          (tyPi "x" tm $ typeof (var 0) (var 3)
-                                     ==> typeof (var 1 @@ var 0) (var 2))
-                          ==>
-                          typeof (obAbs (var 2) (lam "x" tm (var 1 @@ var 0))) (arrow (var 2) (var 1))
+    -- STLC value judgements
+  , "is_value" ::. tm ==> lf_type
+  , "value_Z" :.
+         is_value zero
+  , "value_S" :.
+         pi "n" tm $ \n ->
+           is_value n ==> is_value (suc n)
+  , "value_lam" :.
+         pi "t" tp $ \t ->
+         pi "f" (tm ==> tm) $ \f ->
+           is_value (lam t (λ "x" tm (\x -> f @@ x)))
 
-  , TypeDecl "is_value" $ tm ==> lf_type
-  , TermDecl "value_Z" $ is_value zero
-  , TermDecl "value_S" $ tyPi "n" tm $ is_value (var 0) ==> is_value (suc (var 0))
-  , TermDecl "value_lam" $ tyPi "t" tp $ tyPi "f" (tm ==> tm) $
-                              is_value (obAbs (var 1) (lam "x" tm (var 1 @@ var 0)))
-
-  , TypeDecl "step" $ tm ==> tm ==> lf_type
-
-  , TermDecl "step_app1" $ tyPi "e₁" tm $ tyPi "e₂" tm $ tyPi "e₁'" tm $
-                              step (var 2) (var 0) ==>
-                              step (obApp (var 2) (var 1)) (obApp (var 0) (var 1))
-
-  , TermDecl "step_app2" $ tyPi "e₁" tm $ tyPi "e₂" tm $ tyPi "e₂'" tm $
-                              is_value (var 2) ==>
-                              step (var 1) (var 0) ==>
-                              step (obApp (var 2) (var 1)) (obApp (var 2) (var 0))
-
-  , TermDecl "step_beta" $ tyPi "e₂" tm $ tyPi "f" (tm ==> tm) $ tyPi "t₂" tp $
-                              is_value (var 2) ==>
-                              step (obApp (obAbs (var 0) (lam "x" tm (var 2 @@ var 0))) (var 2))
-                                   (var 1 @@ var 2)
+    -- STLC small-step CBV semantics
+  , "step" ::. tm ==> tm ==> lf_type
+  , "step_app1" :.
+         pi "e₁" tm $ \e1 ->
+         pi "e₂" tm $ \e2 ->
+         pi "e₁'" tm $ \e1' ->
+            step e1 e1' ==>
+            step (app e1 e2) (app e1' e2)
+  , "step_app2" :.
+         pi "e₁" tm $ \e1 ->
+         pi "e₂" tm $ \e2 ->
+         pi "e₂'" tm $ \e2' ->
+            is_value e1 ==>
+            step e2 e2' ==>
+            step (app e1 e2) (app e1 e2')
+  , "step_beta" :.
+         pi "e₂" tm $ \e2 ->
+         pi "f" (tm ==> tm) $ \f ->
+         pi "t₂" tp $ \t2 ->
+            is_value e2 ==>
+            step (app (lam t2 (λ "x" tm (\x -> f @@ x))) e2) (f @@ e2)
+  , "step_nat_zero" :.
+         pi "t" tp $ \t ->
+         pi "z" tm $ \z ->
+         pi "s" tm $ \s ->
+           step (nat_elim t z s zero) z
+  , "step_nat_succ" :.
+         pi "t" tp $ \t ->
+         pi "z" tm $ \z ->
+         pi "s" tm $ \s ->
+         pi "n" tm $ \n ->
+           step (nat_elim t z s (suc n)) (app s (nat_elim t z s n))
   ]
+
+tp :: M (LF TYPE)
+tp = tyConst "tp"
+
+nat :: M (LF TERM)
+nat = tmConst "nat"
+
+arrow :: M (LF TERM) -> M (LF TERM) -> M (LF TERM)
+arrow x y = tmConst "arrow" @@ x @@ y
 
 
 tm :: M (LF TYPE)
 tm = tyConst "tm"
 
-tp :: M (LF TYPE)
-tp = tyConst "tp"
-
-ctx :: M (LF TYPE)
-ctx = tyConst "ctx"
-
 zero :: M (LF TERM)
-zero = tmConst "Z"
+zero = tmConst "zero"
+
+suc :: M (LF TERM) -> M (LF TERM)
+suc x = tmConst "suc" @@ x
+
+app :: M (LF TERM) -> M (LF TERM) -> M (LF TERM)
+app x y = tmConst "app" @@ x @@ y
+
+lam :: M (LF TERM) -> M (LF TERM) -> M (LF TERM)
+lam t f = tmConst "lam" @@ t @@ f
+
+nat_elim :: M (LF TERM) -> M (LF TERM) -> M (LF TERM) -> M (LF TERM) -> M (LF TERM)
+nat_elim t z s n = tmConst "nat_elim" @@ t @@ z @@ s @@ n
+
+typeof :: M (LF TERM) -> M (LF TERM) -> M (LF TYPE)
+typeof t p = tyConst "typeof" @@ t @@ p
+
+of_suc :: M (LF TERM) -> M (LF TERM) -> M (LF TERM)
+of_suc n prf = tmConst "of_suc" @@ n @@ prf
+
+of_zero :: M (LF TERM)
+of_zero = tmConst "of_zero"
 
 is_value :: M (LF TERM) -> M (LF TYPE)
 is_value v = tyConst "is_value" @@ v
@@ -83,39 +150,35 @@ is_value v = tyConst "is_value" @@ v
 step :: M (LF TERM) -> M (LF TERM) -> M (LF TYPE)
 step x x' = tyConst "step" @@ x @@ x'
 
-typeof :: M (LF TERM) -> M (LF TERM) -> M (LF TYPE)
-typeof t p = tyConst "typeof" @@ t @@ p
-
-suc :: M (LF TERM) -> M (LF TERM)
-suc x = tmConst "S" @@ x
-
-nat :: M (LF TERM)
-nat = tmConst "nat"
-
-obApp :: M (LF TERM) -> M (LF TERM) -> M (LF TERM)
-obApp x y = tmConst "app" @@ x @@ y
-
-obAbs :: M (LF TERM) -> M (LF TERM) -> M (LF TERM)
-obAbs t f = tmConst "abs" @@ t @@ f
-
-arrow :: M (LF TERM) -> M (LF TERM) -> M (LF TERM)
-arrow x y = tmConst "arrow" @@ x @@ y
-
-of_S :: M (LF TERM) -> M (LF TERM) -> M (LF TERM)
-of_S n prf = tmConst "of_S" @@ n @@ prf
-
-of_Z :: M (LF TERM)
-of_Z = tmConst "of_Z"
-
 --testTerm :: LF TYPE
 testTerm = runM sig $ (tmConst "of_lam" :: M (LF TERM))
 
-  --obAbs nat (lam "x" tm (suc (var 0)))
+  --abs nat (lam "x" tm (suc (var 0)))
 
 typing :: LF TERM
 typing = runM sig $
-  tmConst "of_lam" @@ nat @@ nat @@ lam "x" tm (suc (var 0)) @@
-     (lam "x" tm $ lam "prf" (typeof (var 0) nat) $ of_S (var 1) (var 0))
+  tmConst "of_lam" @@ nat @@ nat @@ λ"x" tm (\x -> suc x) @@
+     (λ"x" tm $ \x ->
+       λ"prf" (typeof x nat) $ \prf ->
+         of_suc x prf)
+
+typing2 :: LF TERM
+typing2 = runM sig $
+  tmConst "of_lam" @@ nat @@ (arrow nat nat) @@
+      (λ"x" tm (\x -> lam nat (λ"y" tm $ \y -> nat_elim nat x (lam nat (λ"n" tm (\n -> suc n))) y))) @@
+      (λ"x" tm $ \x ->
+        λ"prf_x" (typeof x nat) $ \prf_x ->
+          tmConst "of_lam" @@ nat @@ nat @@
+            (λ"y" tm $ \y -> nat_elim nat x (lam nat (λ"n" tm (\n -> suc n))) y) @@
+            (λ"y" tm $ \y ->
+              λ"prf_y" (typeof y nat) $ \prf_y ->
+                tmConst "of_nat_elim" @@ nat @@ x @@ (lam nat (λ"n" tm (\n -> suc n))) @@ y @@
+                  prf_x @@
+                  (tmConst "of_lam" @@ nat @@ nat @@ (λ"n" tm (\n -> suc n)) @@
+                    (λ"n" tm $ \n -> λ"prf_n" (typeof n nat) $ \prf_n -> of_suc n prf_n)) @@
+                  prf_y
+            )
+      )
 
 --(tmConst "of_lam" :: M (LF TERM))
 
@@ -130,7 +193,7 @@ typing = runM sig $
 
 main = sig `seq` do
    let x :: LF TERM
-       x = typing
+       x = typing2
        -- x = runM sig $ tmConst "step_app2"
-   putStrLn $ show $ runM sig $ ppLF Set.empty Seq.empty x
-   putStrLn $ show $ runM sig (ppLF Set.empty Seq.empty =<< inferType Seq.empty x)
+   putStrLn $ show $ runM sig $ ppLF TopPrec x
+   putStrLn $ show $ runM sig $ ppLF TopPrec =<< inferType x

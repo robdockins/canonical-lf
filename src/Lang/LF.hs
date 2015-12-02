@@ -18,12 +18,14 @@ module Lang.LF
 , tyConst
 , tyApp
 , tyArrow
-, lam
+, λ
 , var
 , tmConst
-, app
+, mkLam
 , LFApplication (..)
 , LFFunc(..)
+, LFPi(..)
+, Prec(..)
 ) where
 
 import Lang.LF.Model
