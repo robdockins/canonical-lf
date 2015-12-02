@@ -292,7 +292,10 @@ inferTypeLF m =
          TyPi _ _ _ -> do
              adoc <- displayLF a
              mdoc <- displayLF m
-             fail $ unwords ["Term fails to be η-long:", mdoc, "::", adoc]
+             fail $ unlines ["Term fails to be η-long:"
+                            , mdoc ++ " ::"
+                            , adoc
+                            ]
     Lam nm a2 m -> do
       nm' <- freshName nm
       a1 <- extendContext nm' a2 $ inferType m
@@ -440,44 +443,46 @@ prettyLF prec x =
          adoc <- ppLF BinderPrec a
          kdoc <- extendContext nm' a $ ppLF TopPrec k
          return $ (if prec /= TopPrec then parens else id) $
-           text "Π" <> text nm' <+> colon <+> adoc <+> comma <+> kdoc
+           text "Π" <> text nm' <+> colon <+> adoc <+> comma <> nest 2 (softline <> kdoc)
       | otherwise -> do
          adoc <- ppLF BinderPrec a
          kdoc <- extendContext "_" (error "unbound name!") $ ppLF TopPrec k
-         return $ (if prec /= TopPrec then parens else id) $
-           adoc <+> text "⇒" <+> kdoc
-    AType x -> ppLF prec x
+         return $ group $ (if prec /= TopPrec then parens else id) $
+           align (adoc <+> text "⇒" <> line <> kdoc)
+    AType x -> group . (linebreak <>) . hang 2 <$> (ppLF prec x)
     TyPi nm a1 a2
       | freeVar 0 a2 -> do
          nm' <- freshName nm
          a1doc <- ppLF BinderPrec a1
          a2doc <- extendContext nm' a1 $ ppLF TopPrec a2
          return $ (if prec /= TopPrec then parens else id) $
-           text "Π" <> text nm' <+> colon <+> a1doc <> comma <+> a2doc
+           text "Π" <> text nm' <+> colon <+> a1doc <> comma <> nest 2 (softline <> a2doc)
       | otherwise -> do
          a1doc <- ppLF BinderPrec a1
          a2doc <- extendContext "_" (error "unbound name!") $ ppLF TopPrec a2
-         return $! (if prec /= TopPrec then parens else id) $
-           a1doc <+> text "⇒" <+> a2doc
+         return $! group $ (if prec /= TopPrec then parens else id) $
+           (align (a1doc <+> text "⇒" <> softline <> a2doc))
     TyConst x -> return $ pretty x
     TyApp p a -> do
          pdoc <- ppLF AppLPrec p
          adoc <- ppLF AppRPrec a
-         return $! (if prec == AppRPrec then parens else id) $
-            pdoc <+> adoc
-    ATerm x -> ppLF prec x
+         return $! group $ (if prec == AppRPrec then parens else id) $
+            (pdoc <> line <> adoc)
+    ATerm x
+      | prec == TopPrec -> group . (linebreak <>) . hang 2 <$> (ppLF prec x)
+      | otherwise -> hang 2 <$> ppLF prec x
     Lam nm a m -> do
          nm' <- freshName nm
          adoc <- ppLF BinderPrec a
          mdoc <- extendContext nm' a $ ppLF TopPrec m
          return $! (if prec /= TopPrec then parens else id) $
-           text "λ" <> text nm' <+> colon <+> adoc <> comma <+> mdoc
+           text "λ" <> text nm' <+> colon <+> adoc <> comma <> nest 2 (softline <> mdoc)
     Const x -> return $ pretty x
     App m1 m2 -> do
          m1doc <- ppLF AppLPrec m1
          m2doc <- ppLF AppRPrec m2
-         return $! (if prec == AppRPrec then parens else id) $
-            m1doc <+> m2doc
+         return $! group $ (if prec == AppRPrec then parens else id) $
+            (m1doc <> line <> m2doc)
     Var v -> text <$> lookupVariableName v
 
 freeVarLF :: LFModel f a c m

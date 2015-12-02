@@ -3,10 +3,12 @@ module Main where
 
 import Prelude hiding (pi, abs)
 
+import           System.IO
+import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
+
 import           Lang.LF
 import           Lang.LF.Tree hiding (M)
 import qualified Lang.LF.Tree as Tree
-
 
 type LF = Tree.LFTree String String
 type Sig = Tree.Signature String String
@@ -193,7 +195,9 @@ typing2 = runM sig $
 
 main = sig `seq` do
    let x :: LF TERM
-       x = typing2
-       -- x = runM sig $ tmConst "step_app2"
-   putStrLn $ show $ runM sig $ ppLF TopPrec x
-   putStrLn $ show $ runM sig $ ppLF TopPrec =<< inferType x
+       -- x = typing
+       x = runM sig $ tmConst "step_beta"
+   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec x
+   putStrLn ""
+   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec =<< inferType x
+   putStrLn ""
