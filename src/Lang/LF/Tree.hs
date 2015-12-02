@@ -19,6 +19,7 @@ module Lang.LF.Tree
 , buildSignature
 , emptySig
 , M
+, mkTerm
 )
 where
 
@@ -68,19 +69,33 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
   contextDepth = do
      (_,ctx,_) <- ask
      return $ Seq.length ctx
-  extendContext nm a action = 
+  kindView = kindViewLF
+  typeView = typeViewLF
+  termView = termViewLF
+  underLambda tm action =
+    case unfoldLF tm of
+      Lam nm a m -> do
+        case action m of
+          Changed m' -> Changed (foldLF . Lam nm a =<< extendContext1 nm a m')
+          _ -> Unchanged tm
+
+      _ -> fail "Expected a lambda term"
+
+  extendContext ctx' action =
+     foldr (\(nm,a) m -> extendContext1 nm a m) action ctx'
+  extendContext1 nm a action =
      withReaderT (\(nms,ctx,sig) -> (Set.insert nm nms, (nm,a) <| ctx, sig))
                  action
   freshName nm = do
      (nms,_,_) <- ask
      return $ getName nms nm
-  lookupVariable i = do
+  lookupVariable (LFVar i) = do
      (_,ctx,_) <- ask
      if i < Seq.length ctx then
        runChangeT $ weaken 0 (i+1) $ snd $ Seq.index ctx i
      else
        fail $ unwords ["Variable out of scope:", show i]
-  lookupVariableName i = do
+  lookupVariableName (LFVar i) = do
      (_,ctx,_) <- ask
      if i < Seq.length ctx then
        return $ fst $ Seq.index ctx i
@@ -148,3 +163,10 @@ buildSignature = either error id . runExcept . foldM f emptySig
 
 runM :: Signature a c -> M a c x -> x
 runM sig = either error id . runExcept . flip runReaderT (Set.empty, Seq.empty, sig)
+
+mkTerm :: (Ord a, Ord c, Pretty a, Pretty c)
+       => Signature a c -> M a c (LFTree a c TERM) -> LFTree a c TERM
+mkTerm sig m = runM sig $ do
+    m' <- m
+    _ <- inferType m'
+    return m'

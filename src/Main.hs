@@ -1,12 +1,16 @@
+{-# LANGUAGE PatternSynonyms #-}
 {-# OPTIONS_GHC -Wwarn #-}
 module Main where
 
 import Prelude hiding (pi, abs)
 
+--import           Data.Sequence (Seq, (<|))
+import qualified Data.Sequence as Seq
 import           System.IO
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
 import           Lang.LF
+import           Lang.LF.ChangeT
 import           Lang.LF.Tree hiding (M)
 import qualified Lang.LF.Tree as Tree
 
@@ -20,6 +24,7 @@ sig = buildSignature
     "tp"      ::. lf_type
   , "arrow"    :. tp ==> tp ==> tp
   , "nat"      :. tp
+  , "unit"     :. tp
 
     -- STLC term formers
   , "tm"      ::. lf_type
@@ -28,9 +33,12 @@ sig = buildSignature
   , "app"      :. tm ==> tm ==> tm
   , "lam"      :. tp ==> (tm ==> tm) ==> tm
   , "nat_elim" :. tp ==> tm ==> tm ==> tm ==> tm
+  , "tt"       :. tm
 
     -- STLC typing judgements
   , "typeof" ::. tm ==> tp ==> lf_type
+  , "of_unit" :.
+         typeof tt unit
   , "of_zero" :.
          typeof zero nat
   , "of_suc" :.
@@ -65,9 +73,11 @@ sig = buildSignature
 
     -- STLC value judgements
   , "is_value" ::. tm ==> lf_type
-  , "value_Z" :.
+  , "value_tt" :.
+         is_value tt
+  , "value_zero" :.
          is_value zero
-  , "value_S" :.
+  , "value_suc" :.
          pi "n" tm $ \n ->
            is_value n ==> is_value (suc n)
   , "value_lam" :.
@@ -107,10 +117,15 @@ sig = buildSignature
          pi "s" tm $ \s ->
          pi "n" tm $ \n ->
            step (nat_elim t z s (suc n)) (app s (nat_elim t z s n))
+
+  , "F" :. tm
   ]
 
 tp :: M (LF TYPE)
 tp = tyConst "tp"
+
+unit :: M (LF TERM)
+unit = tmConst "unit"
 
 nat :: M (LF TERM)
 nat = tmConst "nat"
@@ -122,12 +137,16 @@ arrow x y = tmConst "arrow" @@ x @@ y
 tm :: M (LF TYPE)
 tm = tyConst "tm"
 
+tt :: M (LF TERM)
+tt = tmConst "tt"
+
 zero :: M (LF TERM)
 zero = tmConst "zero"
 
 suc :: M (LF TERM) -> M (LF TERM)
 suc x = tmConst "suc" @@ x
 
+infixl 5 `app`
 app :: M (LF TERM) -> M (LF TERM) -> M (LF TERM)
 app x y = tmConst "app" @@ x @@ y
 
@@ -152,20 +171,16 @@ is_value v = tyConst "is_value" @@ v
 step :: M (LF TERM) -> M (LF TERM) -> M (LF TYPE)
 step x x' = tyConst "step" @@ x @@ x'
 
---testTerm :: LF TYPE
-testTerm = runM sig $ (tmConst "of_lam" :: M (LF TERM))
-
-  --abs nat (lam "x" tm (suc (var 0)))
 
 typing :: LF TERM
-typing = runM sig $
+typing = mkTerm sig $
   tmConst "of_lam" @@ nat @@ nat @@ λ"x" tm (\x -> suc x) @@
      (λ"x" tm $ \x ->
        λ"prf" (typeof x nat) $ \prf ->
          of_suc x prf)
 
 typing2 :: LF TERM
-typing2 = runM sig $
+typing2 = mkTerm sig $
   tmConst "of_lam" @@ nat @@ (arrow nat nat) @@
       (λ"x" tm (\x -> lam nat (λ"y" tm $ \y -> nat_elim nat x (lam nat (λ"n" tm (\n -> suc n))) y))) @@
       (λ"x" tm $ \x ->
@@ -182,22 +197,91 @@ typing2 = runM sig $
             )
       )
 
---(tmConst "of_lam" :: M (LF TERM))
+pattern AppP m1 m2 <-
+  (termView -> ConstHead (Seq.length -> 0) "app" [m1, m2])
+pattern LamP t m <-
+  (termView -> ConstHead (Seq.length -> 0) "lam" [t,m])
+pattern NatElimP t z s n <-
+  (termView -> ConstHead (Seq.length -> 0) "nat_elim" [t,z,s,n])
+pattern ZeroP <-
+  (termView -> ConstHead (Seq.length -> 0) "zero" [])
+pattern SucP n <-
+  (termView -> ConstHead (Seq.length -> 0) "suc" [n])
 
---of_S zero of_Z
 
---
+-- CBV reduction to head-normal form
+eval :: LF TERM -> ChangeT M (LF TERM)
 
---   lam "x" prop (por (var 0) (pand (tmConst "False") (var 0)))
---   lam "x" nat (app (suc (var 0)) (suc (var 0)))
---   nat_iter_type
+-- β reduction
+eval (AppP (LamP _ty body) arg) = do
+    arg' <- eval arg
+    eval =<< Changed (return body @@ return arg')
 
+-- structural evaluation under application
+eval tm@(AppP m1 m2) = do
+    case eval m1 of
+      Unchanged _ ->
+        case eval m2 of
+          Unchanged _ -> Unchanged tm
+          Changed m2' -> eval =<< Changed (app (return m1) m2')
+      Changed m1' ->
+        eval =<< Changed (app m1' (return m2))
+
+-- evaluation under lambdas
+eval tm@(LamP t m) =
+    case underLambda m eval of
+      Changed m' -> Changed (lam (return t) m')
+      _ -> Unchanged tm
+
+-- nat recursor: zero case
+eval (NatElimP _ty z _s ZeroP) =
+    Changed (return z)
+
+-- nat recursor: successor case
+eval (NatElimP ty z s (SucP n)) =
+    eval =<< Changed (return s `app` (nat_elim (return ty) (return z) (return s) (return n)))
+
+eval t = Unchanged t
+
+
+
+five :: M (LF TERM)
+five = suc $ suc $ suc $ suc $ suc $ zero
+
+three :: M (LF TERM)
+three = suc $ suc $ suc $ zero
+
+add :: M (LF TERM)
+add = lam nat (λ"x" tm $ \x ->
+      lam nat (λ"y" tm $ \y ->
+        nat_elim nat x (lam nat (λ"n" tm $ \n -> suc n)) y))
+
+composeN :: M (LF TERM) -> M (LF TERM)
+composeN tp0 = do
+  tpv <- tp0
+  let tp = return tpv
+  lam (arrow tp tp) (λ"f" tm $ \f ->
+    lam nat (λ"n" tm $ \n ->
+      nat_elim (arrow tp tp)
+               (lam tp (λ"q" tm $ \q -> q))
+               (lam (arrow tp tp) (λ"g" tm $ \g ->
+                  lam tp (λ"q" tm $ \q ->
+                    f `app` (g `app` q))))
+               n))
+
+testTerm :: LF TERM
+testTerm =
+  mkTerm sig $ composeN unit `app` (lam unit (λ"q" tm $ \q -> tmConst "F" `app` q)) `app` five --  `app` tt
+--testTerm = runM sig $ add `app` three `app` five
+
+evalTerm :: LF TERM
+evalTerm = mkTerm sig $ runChangeT $ eval testTerm
 
 main = sig `seq` do
    let x :: LF TERM
-       -- x = typing
-       x = runM sig $ tmConst "step_beta"
+       x = evalTerm
+       -- x = runM sig $ tmConst "step_beta"
    displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec x
    putStrLn ""
-   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec =<< inferType x
+   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ (ppLF TopPrec =<< inferType x)
    putStrLn ""

@@ -4,6 +4,12 @@ module Lang.LF
 , KIND
 , TYPE
 , TERM
+, KindView(..)
+, TypeView(..)
+, TermView(..)
+, kindView
+, typeView
+, termView
 , validateKind
 , validateType
 , inferType
@@ -22,6 +28,12 @@ module Lang.LF
 , var
 , tmConst
 , mkLam
+, underLambda
+, extendContext1
+, extendContext
+, lookupVariable
+, lookupVariableName
+, LFVar
 , LFApplication (..)
 , LFFunc(..)
 , LFPi(..)
