@@ -26,22 +26,22 @@ type ATERM = 'ATERM
 --   constants and the type `c` of term constants.
 data LF (f :: SORT -> *) (a :: *) (c :: *) :: SORT -> * where
   Type   :: LF f a c KIND
-  KPi    :: String -> f TYPE -> f KIND -> LF f a c KIND
+  KPi    :: !String -> !(f TYPE) -> !(f KIND) -> LF f a c KIND
 
-  AType   :: f ATYPE -> LF f a c TYPE
-  TyPi    :: String -> f TYPE -> f TYPE -> LF f a c TYPE
-  TyConst :: a -> LF f a c ATYPE
-  TyApp   :: f ATYPE -> f TERM -> LF f a c ATYPE
+  AType   :: !(f ATYPE) -> LF f a c TYPE
+  TyPi    :: !String -> !(f TYPE) -> !(f TYPE) -> LF f a c TYPE
+  TyConst :: !a -> LF f a c ATYPE
+  TyApp   :: !(f ATYPE) -> !(f TERM) -> LF f a c ATYPE
 
-  ATerm  :: f ATERM -> LF f a c TERM
-  Lam    :: String -> f TYPE -> f TERM -> LF f a c TERM
-  Var    :: Int -> LF f a c ATERM
-  Const  :: c -> LF f a c ATERM
-  App    :: f ATERM -> f TERM -> LF f a c ATERM
+  ATerm  :: !(f ATERM) -> LF f a c TERM
+  Lam    :: !String -> !(f TYPE) -> !(f TERM) -> LF f a c TERM
+  Var    :: !Int -> LF f a c ATERM
+  Const  :: !c -> LF f a c ATERM
+  App    :: !(f ATERM) -> !(f TERM) -> LF f a c ATERM
 
 data SimpleType a
-  = SConst a
-  | SArrow (SimpleType a) (SimpleType a)
+  = SConst !a
+  | SArrow !(SimpleType a) !(SimpleType a)
 
 type Ctx f = Seq (f TYPE)
 
@@ -67,8 +67,8 @@ class (Ord a, Ord c, Pretty a, Pretty c, Monad m) => LFModel (f :: SORT -> *) a 
   weaken :: Int -> Int -> f s -> ChangeT m (f s)
   freeVar :: Int -> f s -> Bool
 
-typ :: LFModel f a c m => m (f KIND)
-typ = foldLF Type
+lf_type :: LFModel f a c m => m (f KIND)
+lf_type = foldLF Type
 
 kPi :: LFModel f a c m => String -> m (f TYPE) -> m (f KIND) -> m (f KIND)
 kPi nm a k = foldLF =<< (KPi nm <$> a <*> k)
@@ -77,10 +77,15 @@ tyPi :: LFModel f a c m => String -> m (f TYPE) -> m (f TYPE) -> m (f TYPE)
 tyPi nm a1 a2 = foldLF =<< (TyPi nm <$> a1 <*> a2)
 
 infixr 5 ==>
-(==>) :: LFModel f a c m => m (f TYPE) -> m (f TYPE) -> m (f TYPE)
-(==>) = tyArrow
-
 infixl 2 @@
+
+class LFFunc (s::SORT) where
+  (==>) :: LFModel f a c m => m (f TYPE) -> m (f s) -> m (f s)
+
+instance LFFunc KIND where
+  (==>) = kArrow
+instance LFFunc TYPE where
+  (==>) = tyArrow
 
 class LFApplication (s::SORT) where
   (@@) :: LFModel f a c m => m (f s) -> m (f TERM) -> m (f s)
@@ -113,7 +118,13 @@ tyApp a m = do
   m' <- m
   case unfoldLF a' of
     AType p -> foldLF . AType =<< foldLF (TyApp p m')
-    TyPi _ _ _ -> fail "Cannot apply terms to Pi Types"
+    TyPi _ _ _ -> do
+       adoc <- displayLF a'
+       mdoc <- displayLF m'
+       fail $ unwords ["Cannot apply terms to Pi Types", adoc, mdoc]
+
+displayLF :: LFModel f a c m => f s -> m String
+displayLF x = show <$> ppLF Set.empty Seq.empty x
 
 lam :: LFModel f a c m => String -> m (f TYPE) -> m (f TERM) -> m (f TERM)
 lam nm a m = foldLF =<< (Lam nm <$> a <*> m)
@@ -133,15 +144,26 @@ app x y = do
     Lam _ a m -> runChangeT $ hsubst y' 0 (simpleType a) m
 
 checkType :: LFModel f a c m
-          => Ctx f
+          => f s
+          -> Ctx f
           -> f TERM
           -> f TYPE
           -> m ()
-checkType ctx m a = do
+checkType z ctx m a = do
   a' <- inferType ctx m
   q  <- alphaEq a a'
   if q then return ()
-       else fail "inferred type did not match expected type"
+       else do
+         zdoc <- displayLF z
+         mdoc <- displayLF m
+         adoc  <- displayLF a
+         adoc' <- displayLF a'
+         fail $ unlines ["inferred type did not match expected type"
+                        , "  in term: " ++ zdoc
+                        , "  subterm: " ++ mdoc
+                        , "  expected: " ++ adoc
+                        , "  inferred: " ++ adoc'
+                        ]
 
 headConstantLF :: forall f a c m
                 . LFModel f a c m
@@ -202,7 +224,9 @@ validateTypeLF ctx tm =
       k <- inferKind ctx p
       case unfoldLF k of
         Type -> return ()
-        _ -> fail "invalid atomic type"
+        _ -> do
+          kdoc <- displayLF k
+          fail $ unwords ["invalid atomic type", kdoc]
 
 inferKindLF :: LFModel f a c m
             => Ctx f
@@ -215,10 +239,11 @@ inferKindLF ctx tm =
       k1 <- inferKind ctx p1
       case unfoldLF k1 of
         KPi _ a2 k1 -> do
-          checkType ctx m2 a2
+          checkType tm ctx m2 a2
           runChangeT $ hsubst m2 0 (simpleType a2) k1
-        _ -> fail "invalid atomic type family"
-
+        _ -> do
+               k1doc <- displayLF k1
+               fail $ unwords ["invalid atomic type family", k1doc]
 
 inferTypeLF :: LFModel f a c m
             => Ctx f
@@ -226,7 +251,14 @@ inferTypeLF :: LFModel f a c m
             -> m (f TYPE)
 inferTypeLF ctx m =
   case unfoldLF m of
-    ATerm r -> inferAType ctx r
+    ATerm r -> do
+       a <- inferAType ctx r
+       case unfoldLF a of
+         AType _ -> return a
+         TyPi _ _ _ -> do
+             adoc <- displayLF a
+             mdoc <- displayLF m
+             fail $ unwords ["Term fails to be η-long:", mdoc, "::", adoc]
     Lam nm a2 m -> do
       a1 <- inferType (a2 <| ctx) m
       foldLF (TyPi nm a2 a1)
@@ -237,16 +269,17 @@ inferATypeLF :: LFModel f a c m
             -> m (f TYPE)
 inferATypeLF ctx r =
   case unfoldLF r of
-    Var i | i < Seq.length ctx -> return $ Seq.index ctx i
-          | otherwise -> fail "Variable out of scope"
+    Var i | i < Seq.length ctx -> runChangeT $ weaken 0 (i+1) (Seq.index ctx i)
+          | otherwise -> fail $ unwords ["Variable out of scope", show i]
     Const c -> constType c
     App r1 m2 -> do
       a <- inferAType ctx r1
       case unfoldLF a of
         TyPi _ a2 a1 -> do
-          checkType ctx m2 a2
+          checkType r ctx m2 a2
           runChangeT $ hsubst m2 0 (simpleType a2) a1
-        _ -> fail "Expected function type"
+        _ -> do adoc <- displayLF a
+                fail $ unwords ["Expected function type", adoc]
 
 simpleType :: LFModel f a c m
          => f TYPE
@@ -301,15 +334,21 @@ hsubstLM :: forall f a c m s
 hsubstLM tm0 v0 st0 = \tm ->
   case unfoldLF tm of
     Type         -> Unchanged tm
-    KPi nm a k   -> onChange tm foldLF (KPi nm <$> hsubst tm0 v0 st0 a <*> hsubst tm0 (v0+1) st0 k)
+    KPi nm a k   -> do
+        tm0' <- weaken 0 1 tm0
+        onChange tm foldLF (KPi nm <$> hsubst tm0 v0 st0 a <*> hsubst tm0' (v0+1) st0 k)
 
     AType x      -> onChange tm foldLF (AType <$> hsubst tm0 v0 st0 x)
-    TyPi nm a a' -> onChange tm foldLF (TyPi nm <$> hsubst tm0 v0 st0 a <*> hsubst tm0 (v0+1) st0 a')
+    TyPi nm a a' -> do
+        tm0' <- weaken 0 1 tm0
+        onChange tm foldLF (TyPi nm <$> hsubst tm0 v0 st0 a <*> hsubst tm0' (v0+1) st0 a')
 
     TyConst _    -> Unchanged tm
     TyApp p m    -> onChange tm foldLF (TyApp <$> hsubst tm0 v0 st0 p <*> hsubst tm0 v0 st0 m)
 
-    Lam nm a m   -> onChange tm foldLF (Lam nm <$> hsubst tm0 v0 st0 a <*> hsubst tm0 (v0+1) st0 m)
+    Lam nm a m   -> do
+        tm0' <- weaken 0 1 tm0
+        onChange tm foldLF (Lam nm <$> hsubst tm0 v0 st0 a <*> hsubst tm0' (v0+1) st0 m)
     ATerm x      -> onChange tm (either (return . fst) (foldLF . ATerm)) (hsubstTm x st0)
 
     Const _ -> atermErr
@@ -382,7 +421,7 @@ prettyLF usedNames nameScope prec x =
       | otherwise ->
          (if prec /= TopPrec then parens else id) $
            prettyLF usedNames nameScope BinderPrec a <+>
-           text "→" <+>
+           text "⇒" <+>
            prettyLF usedNames (error "unbound name!" <| nameScope) TopPrec k
     AType x -> prettyLF usedNames nameScope prec x
     TyPi nm a1 a2
@@ -395,7 +434,7 @@ prettyLF usedNames nameScope prec x =
       | otherwise ->
          (if prec /= TopPrec then parens else id) $
            prettyLF usedNames nameScope BinderPrec a1 <+>
-           text "→" <+>
+           text "⇒" <+>
            prettyLF usedNames (error "unbound name!" <| nameScope) TopPrec a2
 
     TyConst x -> pretty x
@@ -417,7 +456,7 @@ prettyLF usedNames nameScope prec x =
          prettyLF usedNames nameScope AppRPrec m2
     Var v
        | v < Seq.length nameScope -> Seq.index nameScope v
-       | otherwise -> error "Variable out of scope!"
+       | otherwise -> text ("$" ++ show v)
 
 freeVarLF :: LFModel f a c m
           => Int

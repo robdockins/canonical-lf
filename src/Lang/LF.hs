@@ -11,7 +11,7 @@ module Lang.LF
 , alphaEq
 , headConstant
 , ppLF
-, typ
+, lf_type
 , kPi
 , kArrow
 , tyPi
@@ -22,8 +22,8 @@ module Lang.LF
 , var
 , tmConst
 , app
-, (==>)
 , LFApplication (..)
+, LFFunc(..)
 ) where
 
 import Lang.LF.Model
