@@ -39,7 +39,7 @@ import Lang.LF.ChangeT
 
 newtype LFTree a c (s::SORT) = LFTree { lfTree :: LF (LFTree a c) a c s }
 
-type M a c = ReaderT (Set String, Seq (String, LFTree a c TYPE), Signature a c) (Except String)
+type M a c = ReaderT (Set String, Seq (String, Quant, LFTree a c TYPE), Signature a c) (Except String)
 
 getName :: Set String
         -> String
@@ -76,15 +76,13 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
     case unfoldLF tm of
       Lam nm a m -> do
         case action m of
-          Changed m' -> Changed (foldLF . Lam nm a =<< extendContext1 nm a m')
+          Changed m' -> Changed (foldLF . Lam nm a =<< extendContext nm QLam a m')
           _ -> Unchanged tm
 
       _ -> fail "Expected a lambda term"
 
-  extendContext ctx' action =
-     foldr (\(nm,a) m -> extendContext1 nm a m) action ctx'
-  extendContext1 nm a action =
-     withReaderT (\(nms,ctx,sig) -> (Set.insert nm nms, (nm,a) <| ctx, sig))
+  extendContext nm qnt a action =
+     withReaderT (\(nms,ctx,sig) -> (Set.insert nm nms, (nm,qnt,a) <| ctx, sig))
                  action
   freshName nm = do
      (nms,_,_) <- ask
@@ -92,13 +90,15 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
   lookupVariable (LFVar i) = do
      (_,ctx,_) <- ask
      if i < Seq.length ctx then
-       runChangeT $ weaken 0 (i+1) $ snd $ Seq.index ctx i
+       let (_,_,a) = Seq.index ctx i in
+       runChangeT $ weaken 0 (i+1) a
      else
        fail $ unwords ["Variable out of scope:", show i]
   lookupVariableName (LFVar i) = do
      (_,ctx,_) <- ask
      if i < Seq.length ctx then
-       return $ fst $ Seq.index ctx i
+       let (nm,_,_) = Seq.index ctx i in
+       return nm
      else
        fail $ unwords ["Variable out of scope:", show i]
   constKind a = do

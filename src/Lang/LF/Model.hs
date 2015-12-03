@@ -1,5 +1,6 @@
 module Lang.LF.Model where
 
+import           Control.Monad
 import           Data.Sequence (Seq, (|>))
 import qualified Data.Sequence as Seq
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
@@ -12,12 +13,21 @@ data SORT
   | ATYPE   -- ^ Atomic type families
   | TERM    -- ^ Terms
   | ATERM   -- ^ Atomic terms
+  | CON     -- ^ Constraints
 
 type KIND  = 'KIND
 type TYPE  = 'TYPE
 type ATYPE = 'ATYPE
 type TERM  = 'TERM
 type ATERM = 'ATERM
+type CON   = 'CON
+
+data Quant
+  = QPi
+  | QLam
+  | QForall
+  | QExists
+ deriving (Eq, Ord, Show)
 
 -- | The syntax algebra of canonical LF terms, parameterized
 --   by the type of subterms `f`, the type `a` of type family
@@ -37,6 +47,10 @@ data LF (f :: SORT -> *) (a :: *) (c :: *) :: SORT -> * where
   Const  :: !c -> LF f a c ATERM
   App    :: !(f ATERM) -> !(f TERM) -> LF f a c ATERM
 
+  Unify  :: !(f ATERM) -> !(f ATERM) -> LF f a c CON
+  And    :: [f CON] -> LF f a c CON
+  Forall :: !String -> !(f TYPE) -> !(f CON) -> LF f a c CON
+  Exists :: !String -> !(f TYPE) -> !(f CON) -> LF f a c CON
 
 newtype LFVar f = LFVar Int
  deriving (Eq, Ord, Show)
@@ -107,9 +121,9 @@ termViewLF = goTm Seq.empty
            Const c -> ConstHead lams c args
            App r m -> goATm lams (m : args) r
 
-data SimpleType a
-  = SConst !a
-  | SArrow !(SimpleType a) !(SimpleType a)
+data SimpleType
+  = SBase
+  | SArrow !SimpleType !SimpleType
 
 class (Ord a, Ord c, Pretty a, Pretty c, Monad m) => LFModel (f :: SORT -> *) a c m | f -> a c m, m -> f a c where
   unfoldLF :: f s -> LF f a c s
@@ -119,12 +133,11 @@ class (Ord a, Ord c, Pretty a, Pretty c, Monad m) => LFModel (f :: SORT -> *) a 
   hsubst :: f TERM
          -> LFVar f
          -> Int
-         -> SimpleType a
+         -> SimpleType
          -> f s
          -> ChangeT m (f s)
 
-  extendContext1 :: String -> f TYPE -> m x -> m x
-  extendContext :: Seq (String, f TYPE) -> m x -> m x
+  extendContext :: String -> Quant -> f TYPE -> m x -> m x
   lookupVariable :: LFVar f -> m (f TYPE)
   lookupVariableName :: LFVar f -> m String
   freshName :: String -> m String
@@ -173,7 +186,7 @@ autoVar = do
   tp' <- tp
   v   <- autoVar
   nm' <- freshName nm
-  m   <- extendContext1 nm' tp' $ f v
+  m   <- extendContext nm' QLam tp' $ f v
   foldLF (Lam nm tp' m)
 
 class LFPi (s::SORT) where
@@ -184,7 +197,7 @@ instance LFPi KIND where
     tp' <- tp
     v   <- autoVar
     nm' <- freshName nm
-    k   <- extendContext1 nm' tp' $ f v
+    k   <- extendContext nm' QPi tp' $ f v
     foldLF (KPi nm tp' k)
 
 instance LFPi TYPE where
@@ -192,7 +205,7 @@ instance LFPi TYPE where
     tp' <- tp
     v   <- autoVar
     nm' <- freshName nm
-    a   <- extendContext1 nm' tp' $ f v
+    a   <- extendContext nm' QPi tp' $ f v
     foldLF (TyPi nm tp' a)
 
 class LFFunc (s::SORT) where
@@ -256,8 +269,53 @@ app x y = do
   x' <- x
   y' <- y
   case unfoldLF x' of
-    ATerm r -> foldLF . ATerm =<<  foldLF (App r y')
+    ATerm r -> foldLF . ATerm =<< foldLF (App r y')
     Lam _ a m -> runChangeT $ hsubst y' zeroVar 0 (simpleType a) m
+
+cExists :: LFModel f a c m
+        => String
+        -> m (f TYPE)
+        -> (m (f TERM) -> m (f CON))
+        -> m (f CON)
+cExists nm tp f = do
+  tp' <- tp
+  v   <- autoVar
+  nm' <- freshName nm
+  m   <- extendContext nm' QForall tp' $ f v
+  foldLF (Exists nm tp' m)
+
+cForall :: LFModel f a c m
+        => String
+        -> m (f TYPE)
+        -> (m (f TERM) -> m (f CON))
+        -> m (f CON)
+cForall nm tp f = do
+  tp' <- tp
+  v   <- autoVar
+  nm' <- freshName nm
+  m   <- extendContext nm' QForall tp' $ f v
+  foldLF (Forall nm tp' m)
+
+conj :: LFModel f a c m
+     => [m (f CON)]
+     -> m (f CON)
+conj cs = foldLF . And =<< sequence cs
+
+unify :: forall f a c m
+       . LFModel f a c m
+      => m (f TERM) -> m (f TERM) -> m (f CON)
+unify x y = join (go <$> x <*> y)
+ where
+  go :: f TERM -> f TERM -> m (f CON)
+  go x y =
+   case (unfoldLF x, unfoldLF y) of
+     (ATerm r1, ATerm r2) -> foldLF (Unify r1 r2)
+     (Lam nm a1 m1, Lam _ a2 m2) -> do
+        q <- alphaEq a1 a2
+        unless q (fail "Attempting to unify LF terms with unequal types")
+        foldLF . Forall nm a1 =<< go m1 m2 
+     _ -> fail "Attempting to unify LF terms with unequal types"
+
 
 checkType :: LFModel f a c m
           => f s
@@ -322,7 +380,7 @@ validateKindLF tm =
     KPi nm a k -> do
       validateType a
       nm' <- freshName nm
-      extendContext1 nm' a $ validateKind k
+      extendContext nm' QPi a $ validateKind k
       {- subordination check -}
 
 validateTypeLF :: LFModel f a c m
@@ -333,7 +391,7 @@ validateTypeLF tm =
     TyPi nm a1 a2 -> do
       validateType a1
       nm' <- freshName nm
-      extendContext1 nm' a1 $ validateType a2
+      extendContext nm' QPi a1 $ validateType a2
 
     AType p -> do
       k <- inferKind p
@@ -377,7 +435,7 @@ inferTypeLF m =
                             ]
     Lam nm a2 m -> do
       nm' <- freshName nm
-      a1 <- extendContext1 nm' a2 $ inferType m
+      a1 <- extendContext nm' QLam a2 $ inferType m
       foldLF (TyPi nm a2 a1)
 
 inferATypeLF :: LFModel f a c m
@@ -398,12 +456,13 @@ inferATypeLF r =
 
 simpleType :: LFModel f a c m
          => f TYPE
-         -> SimpleType a
+         -> SimpleType
 simpleType tm =
   case unfoldLF tm of
-    AType f -> simpleAType f
+    AType _ -> SBase
     TyPi _ a1 a2 -> SArrow (simpleType a1) (simpleType a2)
 
+{-
 simpleAType :: LFModel f a c m
          => f ATYPE
          -> SimpleType a
@@ -411,6 +470,7 @@ simpleAType tm =
   case unfoldLF tm of
     TyConst x -> SConst x
     TyApp p _ -> simpleAType p
+-}
 
 
 weakenLF :: LFModel f a c m
@@ -439,12 +499,17 @@ weakenLF z i tm =
      | v < z     -> Unchanged tm
      | otherwise -> Changed (foldLF (Var (LFVar  (v+i))))
 
+    Unify r1 r2   -> onChange tm foldLF (Unify <$> weakenLF z i r1 <*> weaken z i r2)
+    And cs        -> onChange tm foldLF (And <$> mapM (weakenLF z i) cs)
+    Forall nm a c -> onChange tm foldLF (Forall nm <$> weaken z i a <*> weaken (z+1) i c)
+    Exists nm a c -> onChange tm foldLF (Forall nm <$> weaken z i a <*> weaken (z+1) i c)
+
 hsubstLM :: forall f a c m s
           . LFModel f a c m
          => f TERM
          -> LFVar f
          -> Int
-         -> SimpleType a
+         -> SimpleType
          -> f s
          -> ChangeT m (f s)
 hsubstLM tm0 !v0 !j st0 = \tm ->
@@ -461,6 +526,21 @@ hsubstLM tm0 !v0 !j st0 = \tm ->
     Lam nm a m   -> onChange tm foldLF (Lam nm <$> hsubst tm0 v0 j st0 a <*> hsubst tm0 (incVar v0) (j+1) st0 m)
     ATerm x      -> onChange tm (either (return . fst) (foldLF . ATerm)) (hsubstTm x st0)
 
+    And cs       -> onChange tm (foldLF . And) (mapM (hsubst tm0 v0 j st0) cs)
+    Unify r1 r2  ->
+        case (hsubstTm r1 st0, hsubstTm r2 st0) of
+           (Unchanged _, Unchanged _) -> Unchanged tm
+           (q1, q2) -> do
+             let f :: Either (f TERM, SimpleType) (f ATERM) -> ChangeT m (f ATERM)
+                 f (Left (unfoldLF -> ATerm r, _)) = return r
+                 f (Right r) = return r
+                 f _ = fail "hereditary substitution failed: ill-typed term (in unify)"
+             r1' <- f =<< q1
+             r2' <- f =<< q2
+             Changed (foldLF (Unify r1' r2'))
+    Forall nm a c -> onChange tm foldLF (Forall nm <$> hsubst tm0 v0 j st0 a <*> hsubst tm0 (incVar v0) (j+1) st0 c)
+    Exists nm a c -> onChange tm foldLF (Exists nm <$> hsubst tm0 v0 j st0 a <*> hsubst tm0 (incVar v0) (j+1) st0 c)
+
     Const _ -> atermErr
     Var _   -> atermErr
     App _ _ -> atermErr
@@ -469,8 +549,8 @@ hsubstLM tm0 !v0 !j st0 = \tm ->
        atermErr = fail "Do not call hsubst directly on terms of sort ATERM"
 
        hsubstTm :: f ATERM
-                -> SimpleType a
-                -> ChangeT m (Either (f TERM, SimpleType a) (f ATERM))
+                -> SimpleType
+                -> ChangeT m (Either (f TERM, SimpleType) (f ATERM))
 
        hsubstTm tm st =
          case unfoldLF tm of
@@ -515,12 +595,12 @@ prettyLF prec x =
       | freeVar (LFVar 0) k -> do
          nm' <- freshName nm
          adoc <- ppLF BinderPrec a
-         kdoc <- extendContext1 nm' a $ ppLF TopPrec k
+         kdoc <- extendContext nm' QPi a $ ppLF TopPrec k
          return $ (if prec /= TopPrec then parens else id) $
            text "Π" <> text nm' <+> colon <+> adoc <+> comma <> nest 2 (softline <> kdoc)
       | otherwise -> do
          adoc <- ppLF BinderPrec a
-         kdoc <- extendContext1 "_" (error "unbound name!") $ ppLF TopPrec k
+         kdoc <- extendContext "_" QPi (error "unbound name!") $ ppLF TopPrec k
          return $ group $ (if prec /= TopPrec then parens else id) $
            align (adoc <+> text "⇒" <> line <> kdoc)
     AType x -> group . (linebreak <>) . hang 2 <$> (ppLF prec x)
@@ -528,12 +608,12 @@ prettyLF prec x =
       | freeVar (LFVar 0) a2 -> do
          nm' <- freshName nm
          a1doc <- ppLF BinderPrec a1
-         a2doc <- extendContext1 nm' a1 $ ppLF TopPrec a2
+         a2doc <- extendContext nm' QPi a1 $ ppLF TopPrec a2
          return $ (if prec /= TopPrec then parens else id) $
            text "Π" <> text nm' <+> colon <+> a1doc <> comma <> nest 2 (softline <> a2doc)
       | otherwise -> do
          a1doc <- ppLF BinderPrec a1
-         a2doc <- extendContext1 "_" (error "unbound name!") $ ppLF TopPrec a2
+         a2doc <- extendContext "_" QPi (error "unbound name!") $ ppLF TopPrec a2
          return $! group $ (if prec /= TopPrec then parens else id) $
            (align (a1doc <+> text "⇒" <> softline <> a2doc))
     TyConst x -> return $ pretty x
@@ -548,7 +628,7 @@ prettyLF prec x =
     Lam nm a m -> do
          nm' <- freshName nm
          adoc <- ppLF BinderPrec a
-         mdoc <- extendContext1 nm' a $ ppLF TopPrec m
+         mdoc <- extendContext nm' QLam a $ ppLF TopPrec m
          return $! (if prec /= TopPrec then parens else id) $
            text "λ" <> text nm' <+> colon <+> adoc <> comma <> nest 2 (softline <> mdoc)
     Const x -> return $ pretty x
@@ -558,6 +638,31 @@ prettyLF prec x =
          return $! group $ (if prec == AppRPrec then parens else id) $
             (m1doc <> line <> m2doc)
     Var v -> text <$> lookupVariableName v
+
+    Unify r1 r2 -> do
+         r1doc <- ppLF TopPrec r1
+         r2doc <- ppLF TopPrec r2
+         return $ (r1doc <> text "=" <> line <> r2doc)
+
+    And [] -> return $ text "⊤"
+    And cs -> do
+         cs' <- mapM (ppLF TopPrec) cs
+         return $ align $ cat $ punctuate (text "∧") cs'
+
+    Forall nm a c -> do
+         nm' <- freshName nm
+         adoc <- ppLF BinderPrec a
+         cdoc <- extendContext nm' QForall a $ ppLF TopPrec c
+         return $ (if prec /= TopPrec then parens else id) $
+           text "∀" <> text nm' <+> colon <+> adoc <> comma <> nest 2 (softline <> cdoc)
+
+    Exists nm a c -> do
+         nm' <- freshName nm
+         adoc <- ppLF BinderPrec a
+         cdoc <- extendContext nm' QExists a $ ppLF TopPrec c
+         return $ (if prec /= TopPrec then parens else id) $
+           text "∃" <> text nm' <+> colon <+> adoc <> comma <> nest 2 (softline <> cdoc)
+
 
 incVar :: LFVar f -> LFVar v
 incVar (LFVar x) = LFVar (x+1)
@@ -587,3 +692,7 @@ freeVarLF !i tm =
     Var v
       | v == i    -> True
       | otherwise -> False
+    Unify r1 r2 -> freeVar i r1 || freeVar i r2
+    And cs -> any (freeVar i) cs
+    Forall _ a c -> freeVar i a || freeVar (incVar i) c
+    Exists _ a c -> freeVar i a || freeVar (incVar i) c

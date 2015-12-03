@@ -4,6 +4,7 @@ module Lang.LF
 , KIND
 , TYPE
 , TERM
+, CON
 , KindView(..)
 , TypeView(..)
 , TermView(..)
@@ -29,10 +30,12 @@ module Lang.LF
 , tmConst
 , mkLam
 , underLambda
-, extendContext1
-, extendContext
 , lookupVariable
 , lookupVariableName
+, unify
+, conj
+, cForall
+, cExists
 , LFVar
 , LFApplication (..)
 , LFFunc(..)
