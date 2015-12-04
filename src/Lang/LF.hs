@@ -5,6 +5,7 @@ module Lang.LF
 , TYPE
 , TERM
 , CON
+, GOAL
 , KindView(..)
 , TypeView(..)
 , TermView(..)
@@ -34,8 +35,17 @@ module Lang.LF
 , lookupVariableName
 , unify
 , conj
+, cTrue
 , cForall
 , cExists
+, sigma
+, goal
+, underGoal
+, solve
+, dumpContext
+, autoweaken
+, weaken
+, strengthen
 , LFVar
 , LFApplication (..)
 , LFFunc(..)

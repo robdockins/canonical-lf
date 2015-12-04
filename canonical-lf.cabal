@@ -36,6 +36,7 @@ library
     MultiParamTypeClasses
     PatternGuards
     PolyKinds
+    RankNTypes
     ScopedTypeVariables
     TypeFamilies
     ViewPatterns
@@ -63,6 +64,7 @@ executable testlf
     MultiParamTypeClasses
     PatternGuards
     PolyKinds
+    RankNTypes
     ScopedTypeVariables
     TypeFamilies
     ViewPatterns

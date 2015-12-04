@@ -25,11 +25,12 @@ where
 
 import           Control.Monad.Except
 import           Control.Monad.Reader
+import qualified Data.Foldable as Fold
 import           Data.Map (Map)
 import qualified Data.Map as Map
 import           Data.Set (Set)
 import qualified Data.Set as Set
-import           Data.Sequence (Seq, (<|))
+import           Data.Sequence (Seq, (|>))
 import qualified Data.Sequence as Seq
 
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
@@ -37,7 +38,10 @@ import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 import Lang.LF.Model
 import Lang.LF.ChangeT
 
-newtype LFTree a c (s::SORT) = LFTree { lfTree :: LF (LFTree a c) a c s }
+data LFTree a c (s::SORT) =
+  LFTree { lfTree :: LF (LFTree a c) a c s
+         , lfDepth :: Int
+         }
 
 type M a c = ReaderT (Set String, Seq (String, Quant, LFTree a c TYPE), Signature a c) (Except String)
 
@@ -54,7 +58,10 @@ getName ss nm = tryName ss (nm : [ nm++show i | i <- [0..] ])
 instance (Pretty a, Pretty c, Ord a, Ord c)
     => LFModel (LFTree a c) a c (M a c) where
   unfoldLF = lfTree
-  foldLF = return . LFTree
+  depth = lfDepth
+  foldLF x = do
+    d <- contextDepth
+    return $ LFTree x d
   hsubst = hsubstLM
   validateKind = validateKindLF
   validateType = validateTypeLF
@@ -66,6 +73,7 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
   freeVar = freeVarLF
   ppLF = prettyLF
   headConstant = headConstantLF
+  dumpContext = dumpContextLF
   contextDepth = do
      (_,ctx,_) <- ask
      return $ Seq.length ctx
@@ -82,25 +90,28 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
       _ -> fail "Expected a lambda term"
 
   extendContext nm qnt a action =
-     withReaderT (\(nms,ctx,sig) -> (Set.insert nm nms, (nm,qnt,a) <| ctx, sig))
+     withReaderT (\(nms,ctx,sig) -> (Set.insert nm nms, ctx |> (nm,qnt,a), sig))
                  action
   freshName nm = do
      (nms,_,_) <- ask
      return $ getName nms nm
-  lookupVariable (LFVar i) = do
+  lookupVariable (LFVar v) = do
      (_,ctx,_) <- ask
-     if i < Seq.length ctx then
-       let (_,_,a) = Seq.index ctx i in
-       runChangeT $ weaken 0 (i+1) a
+     let d = Seq.length ctx
+     if 0 <= v && v < d then
+       let (_,_,a) = Seq.index ctx v in
+       let j = d - v in
+       runChangeT $ weaken 0 j a
      else
-       fail $ unwords ["Variable out of scope:", show i]
-  lookupVariableName (LFVar i) = do
+       fail $ unwords ["Variable out of scope (lookup):", show v]
+  lookupVariableName (LFVar v) = do
      (_,ctx,_) <- ask
-     if i < Seq.length ctx then
-       let (nm,_,_) = Seq.index ctx i in
+     let d = Seq.length ctx
+     if 0 <= v && v < d then
+       let (nm,_,_) = Seq.index ctx v in
        return nm
      else
-       fail $ unwords ["Variable out of scope:", show i]
+       fail $ unwords ["Variable out of scope (lookup name):", show v]
   constKind a = do
      (_,_,sig) <- ask
      case Map.lookup a (sigFamilies sig) of
@@ -111,6 +122,20 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
      case Map.lookup c (sigTerms sig) of
        Nothing -> fail $ unwords ["term constant lookup failed:", show (pretty c)]
        Just x  -> return x
+
+dumpContextLF :: (Ord a, Ord c, Pretty a, Pretty c) => M a c Doc
+dumpContextLF = do
+   (_,ctx,_) <- ask
+   binds <- mapM dumpBind $ Fold.toList ctx
+   return $ vcat $ binds
+ where dumpBind (nm,q,a) = do
+           adoc <- ppLF TopPrec a
+           return $ dumpq q <> text nm <+> text ":" <+> adoc
+       dumpq QPi  = text "Π"
+       dumpq QLam = text "λ"
+       dumpq QForall = text "∀"
+       dumpq QExists = text "∃"
+       dumpq QSigma = text "Σ"
 
 infixr 0 ::.
 infixr 0 :.
