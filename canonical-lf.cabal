@@ -14,12 +14,13 @@ library
   exposed-modules:
     Lang.LF
     Lang.LF.Tree
-  other-modules:
     Lang.LF.ChangeT
+  other-modules:
     Lang.LF.Model
   build-depends:
     base >= 4.8 && < 5,
     ansi-wl-pprint,
+    bound >= 1.0.6,
     containers,
     mtl,
     text
@@ -43,11 +44,13 @@ library
   ghc-options: -Werror -W
 
 executable testlf
-  hs-source-dirs: src
+  hs-source-dirs: .
   main-is: Main.hs
   build-depends:
     base >= 4.8 && < 5,
     ansi-wl-pprint,
+    bound >= 1.0.6,
+    canonical-lf,
     containers,
     mtl,
     text
