@@ -1,7 +1,5 @@
 module Lang.LF.ChangeT where
 
-import Control.Monad
-
 data ChangeT m a
   = Unchanged a
   | Changed (m a)
@@ -20,9 +18,7 @@ instance Applicative m => Applicative (ChangeT m) where
 instance Monad m => Monad (ChangeT m) where
   return = Unchanged
   Unchanged x >>= f = f x
-  Changed x  >>= f  = Changed (join (fmap (g . f) x))
-    where g (Unchanged q) = return q
-          g (Changed q) = q
+  Changed x  >>= f  = Changed (x >>= runChangeT . f)
 
 runChangeT :: Monad m => ChangeT m a -> m a
 runChangeT (Unchanged x) = return x

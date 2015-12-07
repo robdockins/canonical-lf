@@ -6,6 +6,7 @@ import Prelude hiding (pi, abs)
 
 --import           Data.Sequence (Seq, (|>))
 --import qualified Data.Sequence as Seq
+import qualified Data.Set as Set
 import           Data.Map (Map)
 import qualified Data.Map as Map
 import           System.IO
@@ -122,65 +123,65 @@ sig = buildSignature
   , "F" :. tm
   ]
 
-tp :: M (LF TYPE)
+tp :: WFContext γ => M (LF γ TYPE)
 tp = tyConst "tp"
 
-unit :: M (LF TERM)
+unit :: WFContext γ => M (LF γ TERM)
 unit = tmConst "unit"
 
-nat :: M (LF TERM)
+nat :: WFContext γ => M (LF γ TERM)
 nat = tmConst "nat"
 
-arrow :: M (LF TERM) -> M (LF TERM) -> M (LF TERM)
+arrow :: WFContext γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM)
 arrow x y = tmConst "arrow" @@ x @@ y
 
 
-tm :: M (LF TYPE)
+tm :: WFContext γ => M (LF γ TYPE)
 tm = tyConst "tm"
 
-tt :: M (LF TERM)
+tt :: WFContext γ => M (LF γ TERM)
 tt = tmConst "tt"
 
-zero :: M (LF TERM)
+zero :: WFContext γ => M (LF γ TERM)
 zero = tmConst "zero"
 
-suc :: M (LF TERM) -> M (LF TERM)
+suc :: WFContext γ => M (LF γ TERM) -> M (LF γ TERM)
 suc x = tmConst "suc" @@ x
 
 infixl 5 `app`
-app :: M (LF TERM) -> M (LF TERM) -> M (LF TERM)
+app :: WFContext γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM)
 app x y = tmConst "app" @@ x @@ y
 
-lam :: M (LF TERM) -> M (LF TERM)
+lam :: WFContext γ => M (LF γ TERM) -> M (LF γ TERM)
 lam f = tmConst "lam" @@ f
 
-nat_elim :: M (LF TERM) -> M (LF TERM) -> M (LF TERM) -> M (LF TERM)
+nat_elim :: WFContext γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM)
 nat_elim z s n = tmConst "nat_elim" @@ z @@ s @@ n
 
-typeof :: M (LF TERM) -> M (LF TERM) -> M (LF TYPE)
+typeof :: WFContext γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TYPE)
 typeof t p = tyConst "typeof" @@ t @@ p
 
-of_suc :: M (LF TERM) -> M (LF TERM) -> M (LF TERM)
+of_suc :: WFContext γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM)
 of_suc n prf = tmConst "of_suc" @@ n @@ prf
 
-of_zero :: M (LF TERM)
+of_zero :: WFContext γ => M (LF γ TERM)
 of_zero = tmConst "of_zero"
 
-is_value :: M (LF TERM) -> M (LF TYPE)
+is_value :: WFContext γ => M (LF γ TERM) -> M (LF γ TYPE)
 is_value v = tyConst "is_value" @@ v
 
-step :: M (LF TERM) -> M (LF TERM) -> M (LF TYPE)
+step :: WFContext γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TYPE)
 step x x' = tyConst "step" @@ x @@ x'
 
 
-typing :: LF TERM
+typing :: LF E TERM
 typing = mkTerm sig $
   tmConst "of_lam" @@ nat @@ nat @@ λ"x" tm (\x -> suc (var x)) @@
      (λ"x" tm $ \x ->
        λ"prf" (typeof (var x) nat) $ \prf ->
          of_suc (var x) (var prf))
 
-typing2 :: LF TERM
+typing2 :: LF E TERM
 typing2 = mkTerm sig $
   tmConst "of_lam" @@ nat @@ (arrow nat nat) @@
       (λ"x" tm (\x -> lam (λ"y" tm $ \y -> nat_elim (var x) (lam (λ"n" tm (\n -> suc (var n)))) (var y)))) @@
@@ -198,6 +199,7 @@ typing2 = mkTerm sig $
             )
       )
 
+{-
 pattern AppP m1 m2 <-
   (termView -> VConst "app" [m1, m2])
 pattern LamP m <-
@@ -314,20 +316,20 @@ eval (NatElimP z s (SucP n)) =
 
 eval t = Unchanged t
 
+-}
 
-
-five :: M (LF TERM)
+five :: M (LF E TERM)
 five = suc $ suc $ suc $ suc $ suc $ zero
 
-three :: M (LF TERM)
+three :: M (LF E TERM)
 three = suc $ suc $ suc $ zero
 
-add :: M (LF TERM)
+add :: M (LF E TERM)
 add = lam (λ"x" tm $ \x ->
       lam (λ"y" tm $ \y ->
         nat_elim (var x) (lam (λ"n" tm $ \n -> suc (var n))) (var y)))
 
-composeN :: M (LF TERM)
+composeN :: M (LF E TERM)
 composeN = do
   lam (λ"f" tm $ \f ->
     lam (λ"n" tm $ \n ->
@@ -337,30 +339,30 @@ composeN = do
                     var f `app` (var g `app` var q))))
                (var n)))
 
-testTerm :: LF TERM
+testTerm :: LF E TERM
 testTerm =
   --mkTerm sig $ composeN unit `app` (lam unit (λ"q" tm $ \q -> tmConst "F" `app` q)) `app` five -- `app` tt
   mkTerm sig $ add `app` three `app` five
 
-evalTerm :: LF TERM
-evalTerm = mkTerm sig $ runChangeT $ eval testTerm
+--evalTerm :: LF TERM
+--evalTerm = mkTerm sig $ runChangeT $ eval testTerm
 
 
 
 
 main = sig `seq` do
+{-
    let x :: LF GOAL
        x = runM sig $ (typecheck Map.empty =<< add)
    displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec x
    putStrLn ""
    --displayIO stdout $ renderSmart 0.7 80 $ runM sig $ (ppLF TopPrec =<< inferType x)
    --putStrLn ""
-
-{-
-   let x :: LF TERM
-       x = typing2
-   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec x
-   putStrLn ""
-   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ (ppLF TopPrec =<< inferType x)
-   putStrLn ""
 -}
+
+   let x :: LF E TERM
+       x = typing2 -- testTerm
+   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec Set.empty HNil x
+   putStrLn ""
+   --displayIO stdout $ renderSmart 0.7 80 $ runM sig $ (ppLF TopPrec =<< inferType x)
+   --putStrLn ""

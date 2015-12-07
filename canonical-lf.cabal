@@ -23,11 +23,13 @@ library
     bound >= 1.0.6,
     containers,
     mtl,
-    text
+    text,
+    transformers
   default-language:
     Haskell2010
   default-extensions:
     BangPatterns
+    ConstraintKinds
     DataKinds
     GADTs
     FlexibleContexts
@@ -39,7 +41,9 @@ library
     PolyKinds
     RankNTypes
     ScopedTypeVariables
+    StandaloneDeriving
     TypeFamilies
+    TypeOperators
     ViewPatterns
   ghc-options: -Werror -W
 
@@ -53,11 +57,13 @@ executable testlf
     canonical-lf,
     containers,
     mtl,
-    text
+    text,
+    transformers
   default-language:
     Haskell2010
   default-extensions:
     BangPatterns
+    ConstraintKinds
     DataKinds
     GADTs
     FlexibleContexts
@@ -69,7 +75,9 @@ executable testlf
     PolyKinds
     RankNTypes
     ScopedTypeVariables
+    StandaloneDeriving
     TypeFamilies
+    TypeOperators
     ViewPatterns
   ghc-options: -Werror -W
   

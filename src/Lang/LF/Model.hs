@@ -1,11 +1,18 @@
+{-# LANGUAGE UndecidableInstances #-}
 module Lang.LF.Model where
 
+import GHC.Exts ( Constraint )
+
 import           Control.Monad
+--import           Control.Monad.Trans.Class
 --import           Data.Sequence (Seq, (|>))
 --import qualified Data.Sequence as Seq
+import           Data.Proxy
+import           Data.Set (Set)
+import qualified Data.Set as Set
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
-import           Lang.LF.ChangeT
+--import           Lang.LF.ChangeT
 
 --import qualified Debug.Trace as Debug
 
@@ -34,32 +41,40 @@ data Quant
   | QExists
  deriving (Eq, Ord, Show)
 
+data Ctx k = E | Ctx k ::> k
+
+type family LFTypeConst (f :: Ctx * -> SORT -> *) :: *
+type family LFConst (f :: Ctx * -> SORT -> *) :: *
+
 -- | The syntax algebra of canonical LF terms, parameterized
 --   by the type of subterms `f`, the type `a` of type family
 --   constants and the type `c` of term constants.
-data LF (f :: SORT -> *) (a :: *) (c :: *) :: SORT -> * where
-  Type   :: LF f a c KIND
-  KPi    :: !String -> !(f TYPE) -> !(f KIND) -> LF f a c KIND
+data LF (f :: Ctx * -> SORT -> *) :: Ctx * -> SORT -> * where
+  Weak   :: f γ s -> LF f (γ ::> b) s
 
-  AType   :: !(f ATYPE) -> LF f a c TYPE
-  TyPi    :: !String -> !(f TYPE) -> !(f TYPE) -> LF f a c TYPE
-  TyConst :: !a -> LF f a c ATYPE
-  TyApp   :: !(f ATYPE) -> !(f TERM) -> LF f a c ATYPE
+  Type   :: LF f E KIND
+  KPi    :: !String -> !(f γ TYPE) -> f (γ ::> ()) KIND -> LF f γ KIND
 
-  ATerm  :: !(f ATERM) -> LF f a c TERM
-  Lam    :: !String -> !(f TYPE) -> !(f TERM) -> LF f a c TERM
-  Var    :: !Int -> LF f a c ATERM
-  Const  :: !c -> LF f a c ATERM
-  App    :: !(f ATERM) -> !(f TERM) -> LF f a c ATERM
+  AType   :: !(f γ ATYPE) -> LF f γ TYPE
+  TyPi    :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) TYPE) -> LF f γ TYPE
+  TyConst :: !(LFTypeConst f) -> LF f E ATYPE
+  TyApp   :: !(f γ ATYPE) -> !(f γ TERM) -> LF f γ ATYPE
 
-  Unify  :: !(f ATERM) -> !(f ATERM) -> LF f a c CON
-  And    :: [f CON] -> LF f a c CON
-  Forall :: !String -> !(f TYPE) -> !(f CON) -> LF f a c CON
-  Exists :: !String -> !(f TYPE) -> !(f CON) -> LF f a c CON
+  ATerm  :: !(f γ ATERM) -> LF f γ TERM
+  Lam    :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) TERM) -> LF f γ TERM
+  Var    :: !b -> LF f (γ ::> b) ATERM
+  Const  :: !(LFConst f) -> LF f E ATERM
+  App    :: !(f γ ATERM) -> !(f γ TERM) -> LF f γ ATERM
 
-  Sigma  :: !String -> !(f TYPE) -> !(f GOAL) -> LF f a c GOAL
-  Goal   :: !(f TERM) -> !(f CON) -> LF f a c GOAL
+  Unify  :: !(f γ ATERM) -> !(f γ ATERM) -> LF f γ CON
+  And    :: [f γ CON] -> LF f γ CON
+  Forall :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) CON) -> LF f γ CON
+  Exists :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) CON) -> LF f γ CON
 
+  Sigma  :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) CON) -> LF f γ CON
+  Goal   :: !(f γ TERM) -> !(f γ CON) -> LF f γ GOAL
+
+{-
 -- | LFVar is a representation of free variables whose type
 --   is given by the current context.  It counts from element
 --   0 being the OUTERMOST variable in the context, rather than
@@ -69,8 +84,10 @@ data LF (f :: SORT -> *) (a :: *) (c :: *) :: SORT -> * where
 --   they are introduced!
 newtype LFVar f = LFVar Int
  deriving (Eq, Ord, Show)
+-}
 
-data KindView f a c m
+{-
+data KindView f a c m 
  = VType
  | VKPi (forall x. (LFVar f -> f KIND -> m x) -> m x)
 
@@ -133,12 +150,15 @@ termViewLF m =
               cont (LFVar (d - v - 1)) args
            Const c -> VConst c args
            App r m -> go (m : args) r
+-}
 
+{-
 data SimpleType
   = SBase
   | SArrow !SimpleType !SimpleType
+-}
 
-strengthen :: LFModel f a c m
+{-strengthen :: LFModel f a c m
            => LFVar f
            -> f s
            -> m (f s)
@@ -156,13 +176,38 @@ strengthen (LFVar v) x = do
        runChangeT $ weaken i (-1) x
    else
      fail "Strengthening an escaped variable"
+-}
 
-class (Ord a, Ord c, Pretty a, Pretty c, Monad m) => LFModel (f :: SORT -> *) a c m | f -> a c m, m -> f a c where
-  unfoldLF :: f s -> LF f a c s
-  foldLF :: LF f a c s  -> m (f s)
-  constKind :: a -> m (f KIND)
-  constType :: c -> m (f TYPE)
-  depth :: f s -> Int
+class (Ord (LFTypeConst f), Ord (LFConst f),
+       Pretty (LFTypeConst f), Pretty (LFConst f),
+       Monad m)
+  => LFModel (f :: Ctx * -> SORT -> *) m | f -> m, m -> f where
+  unfoldLF :: f γ s -> LF f γ s
+  foldLF :: LF f γ s -> m (f γ s)
+  weaken :: f γ s -> f (γ ::> b) s
+
+  hsubst :: Subst m f γ γ'
+         -> f γ s
+         -> m (f γ' s)
+
+  ppLF :: WFContext γ
+       => Prec
+       -> Set String
+       -> Hyps f γ
+       -> f γ s
+       -> m Doc
+
+  validateKind :: Set String -> Hyps f γ -> f γ KIND  -> m ()
+  validateType :: Set String -> Hyps f γ -> f γ TYPE  -> m ()
+  inferKind    :: Set String -> Hyps f γ -> f γ ATYPE -> m (f γ KIND)
+  inferType    :: Set String -> Hyps f γ -> f γ TERM  -> m (f γ TYPE)
+  inferAType   :: Set String -> Hyps f γ -> f γ ATERM -> m (f γ TYPE)
+  alphaEq :: f γ s -> f γ s -> m Bool
+
+{-
+  constKind :: a -> m (f KIND x)
+  constType :: c -> m (f TYPE x)
+  depth :: f s x -> Int
 
   hsubst :: f TERM
          -> Int
@@ -181,90 +226,100 @@ class (Ord a, Ord c, Pretty a, Pretty c, Monad m) => LFModel (f :: SORT -> *) a 
   termView :: f TERM -> TermView f a c m
 
   ppLF :: Prec -> f s -> m Doc
-  validateKind :: f KIND -> m ()
-  validateType :: f TYPE -> m ()
-  inferKind :: f ATYPE -> m (f KIND)
-  inferType :: f TERM -> m (f TYPE)
-  inferAType :: f ATERM -> m (f TYPE)
-  alphaEq :: f s -> f s -> m Bool
   headConstant :: f TYPE -> m a
   weaken :: Int -> Int -> f s -> ChangeT m (f s)
   freeVar :: Int -> f s -> Bool
   contextDepth :: m Int
   underLambda :: f TERM -> (f TERM -> ChangeT m (f TERM)) -> ChangeT m (f TERM)
   dumpContext :: m Doc
+-}
 
-lf_type :: LFModel f a c m => m (f KIND)
-lf_type = foldLF Type
+type family CtxAppend γ γ' :: Ctx * where
+  CtxAppend γ E = γ
+  CtxAppend γ (γ' ::> b) = CtxAppend γ γ' ::> b
 
-kPi :: LFModel f a c m => String -> m (f TYPE) -> m (f KIND) -> m (f KIND)
+type family CtxDiff γ γ' :: Ctx * where
+  CtxDiff γ γ = E
+  CtxDiff γ (γ' ::> b) = CtxDiff γ γ' ::> b
+
+class (CtxAppend γ diff ~ γ') => AutoWeaken γ diff γ' where
+  autoweaken' :: LFModel f m => Proxy diff -> f γ s -> f γ' s
+class CtxSub (γ :: Ctx *) (γ' :: Ctx *) where
+  autoweaken :: LFModel f m => f γ s -> f γ' s
+
+instance AutoWeaken γ E γ where
+  autoweaken' _ = id
+instance AutoWeaken γ diff γ' => AutoWeaken γ (diff ::> b) (γ' ::> b) where
+  autoweaken' _ = weaken . autoweaken' (Proxy :: Proxy diff)
+instance (CtxAppend γ (CtxDiff γ γ') ~ γ', AutoWeaken γ (CtxDiff γ γ') γ') => CtxSub γ γ' where
+  autoweaken = autoweaken' (Proxy :: Proxy (CtxDiff γ γ'))
+
+type IsBoundVar b = (Show b, Ord b, Eq b)
+
+type family WFContextRec (c::Ctx *) :: Constraint where
+  WFContextRec E = ()
+  WFContextRec (γ ::> b) = (WFContext γ, IsBoundVar b)
+
+type WFContext γ = (LiftClosed γ, Ord (Var γ), WFContextRec γ)
+
+class LiftClosed (γ :: Ctx *) where
+  liftClosed :: LFModel f m => f E s -> f γ s
+instance LiftClosed E where
+  liftClosed = id
+instance LiftClosed γ => LiftClosed (γ ::> b) where
+  liftClosed = weaken . liftClosed
+
+
+lf_type :: (WFContext γ, LFModel f m) => m (f γ KIND)
+lf_type = liftClosed <$> foldLF Type
+
+kPi :: LFModel f m => String -> m (f γ TYPE) -> m (f (γ ::> ()) KIND) -> m (f γ KIND)
 kPi nm a k = foldLF =<< (KPi nm <$> a <*> k)
 
-tyPi :: LFModel f a c m => String -> m (f TYPE) -> m (f TYPE) -> m (f TYPE)
+tyPi :: LFModel f m => String -> m (f γ TYPE) -> m (f (γ ::> ()) TYPE) -> m (f γ TYPE)
 tyPi nm a1 a2 = foldLF =<< (TyPi nm <$> a1 <*> a2)
 
 infixr 5 ==>
 infixl 2 @@
 
-var :: LFModel f a c m => LFVar f -> m (f TERM)
-var (LFVar v) = do
-  d <- contextDepth
-  if d > v then
-    foldLF . ATerm =<< foldLF (Var (d - v - 1))
-  else
-    fail $ unwords ["variable out of scope:", show v]
+var0 :: LFModel f m => Var γ -> (f γ ATERM -> f γ' ATERM) -> m (f γ' ATERM)
+var0 (F x) w = var0 x (w . weaken)
+var0 (B b) w = w <$> foldLF (Var b)
 
-autoVar :: LFModel f a c m => m (LFVar f)
-autoVar = do
-  startDepth <- contextDepth
-  return (LFVar startDepth)
-{-
-$ do
-    endDepth <- contextDepth
-    if (endDepth > startDepth) then
-      foldLF . ATerm =<< foldLF (Var (endDepth - startDepth - 1))
-    else
-      fail $ "automatic variable escaped its scope!"
--}
+var :: (CtxSub γ γ', LFModel f m) => Var γ -> m (f γ' TERM)
+var v = autoweaken <$> (foldLF . ATerm =<< var0 v id)
 
-autoweaken :: LFModel f a c m => m (f s) -> m (f s)
-autoweaken x = do
-  x' <- x
-  d <- contextDepth
-  if depth x' < d then
-    runChangeT $ weaken 0 (d - depth x') x'
-  else
-    return x'
-
-λ :: LFModel f a c m => String -> m (f TYPE) -> (LFVar f -> m (f TERM)) -> m (f TERM)
+λ :: (LFModel f m)
+  => String
+  -> m (f γ TYPE)
+  -> (forall b. IsBoundVar b => Var (γ ::> b) -> m (f (γ::>b) TERM))
+  -> m (f γ TERM)
 λ nm tp f = do
-  tp' <- autoweaken tp
-  v   <- autoVar
-  nm' <- freshName nm
-  m   <- extendContext nm' QLam tp' $ autoweaken (f v)
+  tp' <- tp
+  m   <- f (B ())
   foldLF (Lam nm tp' m)
 
 class LFPi (s::SORT) where
-  pi :: LFModel f a c m => String -> m (f TYPE) -> (LFVar f -> m (f s)) -> m (f s)
+  pi :: LFModel f m
+     => String
+     -> m (f γ TYPE)
+     -> (forall b. IsBoundVar b => Var (γ::>b) -> m (f (γ::>b) s))
+     -> m (f γ s)
 
 instance LFPi KIND where
   pi nm tp f = do
-    tp' <- autoweaken tp
-    v   <- autoVar
-    nm' <- freshName nm
-    k   <- extendContext nm' QPi tp' $ autoweaken (f v)
+    tp' <- tp
+    k   <- f (B ())
     foldLF (KPi nm tp' k)
 
 instance LFPi TYPE where
   pi nm tp f = do
-    tp' <- autoweaken tp
-    v   <- autoVar
-    nm' <- freshName nm
-    a   <- extendContext nm' QPi tp' $ autoweaken (f v)
+    tp' <- tp
+    a   <- f (B ())
     foldLF (TyPi nm tp' a)
 
 class LFFunc (s::SORT) where
-  (==>) :: LFModel f a c m => m (f TYPE) -> m (f s) -> m (f s)
+  (==>) :: LFModel f m => m (f γ TYPE) -> m (f γ s) -> m (f γ s)
 
 instance LFFunc KIND where
   (==>) = kArrow
@@ -272,37 +327,46 @@ instance LFFunc TYPE where
   (==>) = tyArrow
 
 class LFApplication (s::SORT) where
-  (@@) :: LFModel f a c m => m (f s) -> m (f TERM) -> m (f s)
+  (@@) :: (WFContext γ, LFModel f m) => m (f γ s) -> m (f γ TERM) -> m (f γ s)
 
 instance LFApplication TYPE where
   (@@) = tyApp
 instance LFApplication TERM where
   (@@) = app
 
-tyArrow :: LFModel f a c m => m (f TYPE) -> m (f TYPE) -> m (f TYPE)
+tyArrow :: LFModel f m => m (f γ TYPE) -> m (f γ TYPE) -> m (f γ TYPE)
 tyArrow a1 a2 = do
-   a1' <- autoweaken a1
-   a2' <- extendContext "_" QPi a1' $ autoweaken a2
-   --a2'' <- runChangeT $ weaken 0 1 a2'
+   a1' <- a1
+   a2' <- weaken <$> a2
    foldLF (TyPi "_" a1' a2')
 
-kArrow :: LFModel f a c m => m (f TYPE) -> m (f KIND) -> m (f KIND)
+kArrow :: LFModel f m => m (f γ TYPE) -> m (f γ KIND) -> m (f γ KIND)
 kArrow a k = do
-   a' <- autoweaken a
-   k' <- extendContext "_" QPi a' $ autoweaken k
-   --k' <- k
-   --k'' <- runChangeT $ weaken 0 1 k'
+   a' <- a
+   k' <- weaken <$> k
    foldLF (KPi "_" a' k')
 
-tyConst :: LFModel f a c m => a -> m (f TYPE)
-tyConst x = foldLF . AType =<< foldLF (TyConst x)
+tyConst :: (WFContext γ, LFModel f m) => LFTypeConst f -> m (f γ TYPE)
+tyConst x = liftClosed <$> (foldLF . AType =<< foldLF (TyConst x))
 
-tyApp :: LFModel f a c m => m (f TYPE) -> m (f TERM) -> m (f TYPE)
-tyApp a m = do
-  a' <- autoweaken a
-  m' <- autoweaken m
-  case unfoldLF a' of
-    AType p -> foldLF . AType =<< foldLF (TyApp p m')
+tyApp :: forall f m γ. LFModel f m => m (f γ TYPE) -> m (f γ TERM) -> m (f γ TYPE)
+tyApp a m = join (go1 <$> a <*> m)
+ where
+  go1 :: forall γ. f γ TYPE -> f γ TERM -> m (f γ TYPE)
+  go1 a' m' =
+   case (unfoldLF a', unfoldLF m') of
+     (Weak a'', Weak m'') -> weaken <$> go1 a'' m''
+     _ -> go2 a' m' id
+
+  go2 :: forall γ γ'. f γ TYPE -> f γ' TERM -> (f γ ATYPE -> f γ' ATYPE) -> m (f γ' TYPE)
+  go2 a' m' w =
+   case unfoldLF a' of
+     Weak a'' -> go2 a'' m' (w . weaken)
+     AType p -> foldLF . AType =<< foldLF (TyApp (w p) m')
+     TyPi _ _ _ -> do
+        fail $ unwords ["Cannot apply terms to Pi Types"]
+
+{-
     TyPi _ _ _ -> do
        adoc <- displayLF a'
        mdoc <- displayLF m'
@@ -310,24 +374,43 @@ tyApp a m = do
 
 displayLF :: LFModel f a c m => f s -> m String
 displayLF x = show <$> ppLF TopPrec x
+-}
 
-mkLam :: LFModel f a c m => String -> m (f TYPE) -> m (f TERM) -> m (f TERM)
+mkLam :: LFModel f m => String -> m (f γ TYPE) -> m (f (γ::>()) TERM) -> m (f γ TERM)
 mkLam nm a m = do
-  a' <- autoweaken a
-  m' <- extendContext nm QLam a' $ autoweaken m
+  a' <- a
+  m' <- m
   foldLF (Lam nm a' m')
 
-tmConst :: LFModel f a c m => c -> m (f TERM)
-tmConst x = foldLF . ATerm =<< foldLF (Const x)
+tmConst :: (WFContext γ, LFModel f m) => LFConst f -> m (f γ TERM)
+tmConst x = liftClosed <$> (foldLF . ATerm =<< foldLF (Const x))
 
-app :: LFModel f a c m => m (f TERM) -> m (f TERM) -> m (f TERM)
-app x y = do
-  x' <- autoweaken x
-  y' <- autoweaken y
-  case unfoldLF x' of
-    ATerm r -> foldLF . ATerm =<< foldLF (App r y')
-    Lam _ a m -> runChangeT $ hsubst y' 0 0 (simpleType a) m
 
+app :: forall m f γ. (WFContext γ, LFModel f m)
+    => m (f γ TERM)
+    -> m (f γ TERM)
+    -> m (f γ TERM)
+app x y = join (go1 <$> x <*> y)
+ where
+  go1 :: forall γ. WFContext γ => f γ TERM -> f γ TERM -> m (f γ TERM)
+  go1 x' y' =
+   case (unfoldLF x', unfoldLF y') of
+     (Weak x'', Weak y'') -> weaken <$> go1 x'' y''
+     _ -> go2 x' y' id SubstEnd
+
+  go2 :: forall γ γ'. WFContext γ'
+                   => f γ TERM
+                   -> f γ' TERM
+                   -> (forall s. f γ s -> f γ' s)
+                   -> (Subst m f γ γ')
+                   -> m (f γ' TERM)
+  go2 x' y' w s =
+   case unfoldLF x' of
+     Weak x''  -> go2 x'' y' (w . weaken) (SubstWeak s)
+     ATerm r   -> foldLF . ATerm =<< foldLF (App (w r) y')
+     Lam _ _ m -> hsubst (SubstApply s (\_ -> return y')) m
+
+{-
 cExists :: LFModel f a c m
         => String
         -> m (f TYPE)
@@ -462,55 +545,85 @@ headConstantLF a =
          case unfoldLF p of
            TyConst a -> return a
            TyApp p _ -> f p
+-}
 
-alphaEqLF :: LFModel f a c m
-          => f s
-          -> f s
+mapF :: (Var γ -> Var γ') -> Var (γ ::> b) -> Var (γ' ::> b)
+mapF _ (B b) = B b
+mapF f (F x) = F (f x)
+
+alphaEqLF :: (WFContext γ, LFModel f m)
+          => (Var γ₁ -> Var γ)
+          -> (Var γ₂ -> Var γ)
+          -> f γ₁ s
+          -> f γ₂ s
           -> m Bool
-alphaEqLF x y =
+alphaEqLF w₁ w₂ x y =
   case (unfoldLF x, unfoldLF y) of
+    (Weak x'     , _)              -> alphaEqLF (w₁ . F) w₂ x' y
+    (_           , Weak y')        -> alphaEqLF w₁ (w₂ . F) x y'
     (Type        , Type)           -> return True
-    (KPi _ a k   , KPi _ a' k')    -> (&&) <$> alphaEq a a' <*> alphaEq k k'
-    (AType x     , AType x')       -> alphaEq x x'
-    (TyPi _ a1 a2, TyPi _ a1' a2') -> (&&) <$> alphaEq a1 a1' <*> alphaEq a2 a2'
+    (KPi _ a k   , KPi _ a' k')    -> (&&) <$> alphaEqLF w₁ w₂ a a' <*> alphaEqLF (mapF w₁) (mapF w₂) k k'
+    (AType x     , AType x')       -> alphaEqLF w₁ w₂ x x'
+    (TyPi _ a1 a2, TyPi _ a1' a2') -> (&&) <$> alphaEqLF w₁ w₂ a1 a1' <*> alphaEqLF (mapF w₁) (mapF w₂) a2 a2'
     (TyConst x   , TyConst x')     -> return $ x == x'
-    (TyApp a m   , TyApp a' m')    -> (&&) <$> alphaEq a a' <*> alphaEq m m'
-    (ATerm x     , ATerm x')       -> alphaEq x x'
-    (Lam _ a m   , Lam _ a' m')    -> (&&) <$> alphaEq a a' <*> alphaEq m m'
-    (Var v       , Var v')         -> return $ v == v'
+    (TyApp a m   , TyApp a' m')    -> (&&) <$> alphaEqLF w₁ w₂ a a' <*> alphaEqLF w₁ w₂ m m'
+    (ATerm x     , ATerm x')       -> alphaEqLF w₁ w₂ x x'
+    (Lam _ a m   , Lam _ a' m')    -> (&&) <$> alphaEqLF w₁ w₂ a a' <*> alphaEqLF (mapF w₁) (mapF w₂) m m'
+    (Var v       , Var v')         -> return $ w₁ (B v) == w₂ (B v')
     (Const x     , Const x')       -> return $ x == x'
-    (App r m     , App r' m')      -> (&&) <$> alphaEq r r' <*> alphaEq m m'
+    (App r m     , App r' m')      -> (&&) <$> alphaEqLF w₁ w₂ r r' <*> alphaEqLF w₁ w₂ m m'
+    (Unify r1 r2 , Unify r1' r2')  -> (&&) <$> alphaEqLF w₁ w₂ r1 r1' <*> alphaEqLF w₁ w₂ r2 r2'
+    (And cs      , And cs')        -> all id <$> (sequence $ zipWith (alphaEqLF w₁ w₂) cs cs')
+    (Forall _ a c, Forall _ a' c') -> (&&) <$> alphaEqLF w₁ w₂ a a' <*> alphaEqLF (mapF w₁) (mapF w₂) c c'
+    (Exists _ a c, Exists _ a' c') -> (&&) <$> alphaEqLF w₁ w₂ a a' <*> alphaEqLF (mapF w₁) (mapF w₂) c c'
+    (Sigma _ a g , Sigma _ a' g')  -> (&&) <$> alphaEqLF w₁ w₂ a a' <*> alphaEqLF (mapF w₁) (mapF w₂) g g'
+    (Goal m c    , Goal m' c')     -> (&&) <$> alphaEqLF w₁ w₂ m m' <*> alphaEqLF w₁ w₂ c c'
     _ -> return False
 
-validateKindLF :: LFModel f a c m
-               => f KIND
+validateKindLF :: LFModel f m
+               => Set String
+               -> Hyps f γ
+               -> f γ KIND
                -> m ()
-validateKindLF tm =
+validateKindLF nms hyps tm =
   case unfoldLF tm of
+    Weak x ->
+      case hyps of
+        HCons hyps' _ _ -> validateKind nms hyps' x
+        _ -> error "impossible"
     Type -> return ()
     KPi nm a k -> do
-      validateType a
-      nm' <- freshName nm
-      extendContext nm' QPi a $ validateKind k
+      validateType nms hyps a
+      let (nm',nms') = freshName nm nms
+      validateKind nms' (extendHyps hyps nm' QPi a) k
       {- subordination check -}
 
-validateTypeLF :: LFModel f a c m
-               => f TYPE
+validateTypeLF :: LFModel f m
+               => Set String
+               -> Hyps f γ
+               -> f γ TYPE
                -> m ()
-validateTypeLF tm =
+validateTypeLF nms hyps tm =
   case unfoldLF tm of
+    Weak x ->
+      case hyps of
+        HCons hyps' _ _ -> validateType nms hyps' x
     TyPi nm a1 a2 -> do
-      validateType a1
-      nm' <- freshName nm
-      extendContext nm' QPi a1 $ validateType a2
+      validateType nms hyps a1
+      let (nm',nms') = freshName nm nms
+      validateType nms' (extendHyps hyps nm' QPi a1) a2
 
     AType p -> do
-      k <- inferKind p
+      k <- inferKind nms hyps p
       case unfoldLF k of
         Type -> return ()
+{-
         _ -> do
           kdoc <- displayLF k
           fail $ unwords ["invalid atomic type", kdoc]
+-}
+
+{-
 
 inferKindLF :: LFModel f a c m
             => f ATYPE
@@ -587,94 +700,164 @@ simpleAType tm =
     TyConst x -> SConst x
     TyApp p _ -> simpleAType p
 -}
+-}
 
 
-weakenLF :: LFModel f a c m
-         => Int -- ^ cutoff
-         -> Int -- ^ amount to weaken
-         -> f s
-         -> ChangeT m (f s)
-weakenLF z i tm =
+instantiateVar :: forall f m γ s
+                . (LFModel f m)
+               => f (γ ::> ()) s
+               -> f γ TERM
+               -> m (f γ s)
+instantiateVar body arg = hsubst sub body
+ where sub :: Subst m f (γ ::> ()) γ
+       sub = SubstApply SubstEnd (\_ -> return arg)
+
+data Subst m f :: Ctx * -> Ctx * -> * where
+  SubstEnd   :: Subst m f γ γ
+  SubstApply :: Subst m f γ γ' -> (b -> m (f γ' TERM)) -> Subst m f (γ ::> b) γ'
+  SubstWeak  :: Subst m f (γ ::> b) γ' -> Subst m f γ γ'
+  SubstSkip  :: Subst m f γ γ' -> Subst m f (γ ::> b) (γ' ::> b)
+
+hsubstLF :: forall f m s γ γ'
+          . (LFModel f m)
+         => Subst m f γ γ'
+         -> f γ s
+         -> m (f γ' s)
+hsubstLF SubstEnd tm = return tm
+hsubstLF (SubstWeak s) tm = hsubst s (weaken tm)
+hsubstLF sub tm =
   case unfoldLF tm of
-    Type         -> Unchanged tm
-    KPi nm a k   -> onChange tm foldLF (KPi nm <$> weaken z i a <*> weaken (z+1) i k)
+     Weak x ->
+       case sub of
+         SubstSkip    s -> weaken <$> hsubst s x
+         SubstApply s _ -> hsubst s x
+         SubstEnd       -> return tm
+         SubstWeak s    -> hsubst s (weaken tm)
 
-    AType x      -> onChange tm foldLF (AType <$> weaken z i x)
-    TyPi nm a a' -> onChange tm foldLF (TyPi nm <$> weaken z i a <*> weaken (z+1) i a')
+     Type ->
+        case sub of
+          SubstEnd    -> return tm
+          SubstWeak s -> hsubst s (weaken tm)
+          _ -> error "impossible"
 
-    TyConst _    -> Unchanged tm
-    TyApp p m    -> onChange tm foldLF (TyApp <$> weaken z i p <*> weaken z i m)
+     KPi nm a k   -> foldLF =<< (KPi nm <$> hsubst sub a <*> hsubst sub' k)
 
-    Lam nm a m   -> onChange tm foldLF (Lam nm <$> weaken z i a <*> weaken (z+1) i m)
-    ATerm x      -> onChange tm foldLF (ATerm <$> weaken z i x)
+     AType x      -> foldLF =<< (AType <$> hsubst sub x)
+     TyPi nm a a' -> foldLF =<< (TyPi nm <$> hsubst sub a <*> hsubst sub' a')
 
-    Const _      -> Unchanged tm
-    App m1 m2    -> onChange tm foldLF (App <$> weaken z i m1 <*> weaken z i m2)
+     TyConst _ ->
+        case sub of
+          SubstEnd -> return tm
+          SubstWeak s -> hsubst s (weaken tm)
+          _ -> error "impossible"
 
-    Var v
-     | v < z     -> Unchanged tm
-     | otherwise -> Changed (foldLF (Var (v+i)))
+     TyApp p m    -> foldLF =<< (TyApp <$> hsubst sub p <*> hsubst sub m)
+ 
+     Lam nm a m   -> foldLF =<< (Lam nm <$> hsubst sub a <*> hsubst sub' m)
 
-    Unify r1 r2   -> onChange tm foldLF (Unify <$> weakenLF z i r1 <*> weaken z i r2)
-    And cs        -> onChange tm foldLF (And <$> mapM (weakenLF z i) cs)
-    Forall nm a c -> onChange tm foldLF (Forall nm <$> weaken z i a <*> weaken (z+1) i c)
-    Exists nm a c -> onChange tm foldLF (Forall nm <$> weaken z i a <*> weaken (z+1) i c)
+     And cs       -> foldLF . And =<< (mapM (hsubst sub) cs)
 
-    Sigma nm a g  -> onChange tm foldLF (Sigma nm <$> weaken z i a <*> weaken (z+1) i g)
-    Goal m c      -> onChange tm foldLF (Goal <$> weaken z i m <*> weaken z i c)
+     Unify r1 r2  -> do
+        let f :: Either (f γ' TERM) (f γ' ATERM) -> m (f γ' ATERM)
+            f (Left (unfoldLF -> ATerm r)) = return r
+            f (Right r) = return r
+            f _ = fail "hereditary substitution failed: ill-typed term (in unify)"
+        r1' <- f =<< hsubstTm sub r1
+        r2' <- f =<< hsubstTm sub r2
+        foldLF (Unify r1' r2')
 
-hsubstLM :: forall f a c m s
-          . LFModel f a c m
-         => f TERM
-         -> Int -- ^ variable to substitute for
-         -> Int -- ^ how much to weaken the term
-         -> SimpleType
-         -> f s
-         -> ChangeT m (f s)
-hsubstLM tm0 !v0 !j st0 = \tm ->
-  case unfoldLF tm of
-    Type         -> Unchanged tm
-    KPi nm a k   -> onChange tm foldLF (KPi nm <$> hsubst tm0 v0 j st0 a <*> hsubst tm0 (v0+1) (j+1) st0 k)
+     Forall nm a c -> foldLF =<< (Forall nm <$> hsubst sub a <*> hsubst sub' c)
+     Exists nm a c -> foldLF =<< (Exists nm <$> hsubst sub a <*> hsubst sub' c)
 
-    AType x      -> onChange tm foldLF (AType <$> hsubst tm0 v0 j st0 x)
-    TyPi nm a a' -> onChange tm foldLF (TyPi nm <$> hsubst tm0 v0 j st0 a <*> hsubst tm0 (v0+1) (j+1) st0 a')
+     Sigma nm a g  -> foldLF =<< (Sigma nm <$> hsubst sub a <*> hsubst sub' g)
+     Goal m c      -> foldLF =<< (Goal <$> hsubst sub m <*> hsubst sub c)
 
-    TyConst _    -> Unchanged tm
-    TyApp p m    -> onChange tm foldLF (TyApp <$> hsubst tm0 v0 j st0 p <*> hsubst tm0 v0 j st0 m)
+     ATerm x      -> either return (foldLF . ATerm) =<< hsubstTm sub x
 
-    Lam nm a m   -> onChange tm foldLF (Lam nm <$> hsubst tm0 v0 j st0 a <*> hsubst tm0 (v0+1) (j+1) st0 m)
-    ATerm x      -> onChange tm (either (return . fst) (foldLF . ATerm)) (hsubstTm x st0)
+     Const _ -> atermErr
+     Var _   -> atermErr
+     App _ _ -> atermErr
 
-    And cs       -> onChange tm (foldLF . And) (mapM (hsubst tm0 v0 j st0) cs)
+ where
+  sub' :: forall b. Subst m f (γ ::> b) (γ' ::> b)
+  sub' = SubstSkip sub
+
+  atermErr :: forall x. m x
+  atermErr = fail "Do not call hsubst directly on terms of sort ATERM"
+
+hsubstTm :: forall m f γ γ'
+          . (LFModel f m)
+         => Subst m f γ γ'
+         -> f γ ATERM
+         -> m (Either (f γ' TERM) (f γ' ATERM))
+hsubstTm (SubstWeak s) tm = hsubstTm s (weaken tm)
+hsubstTm sub tm =
+         case unfoldLF tm of
+           Weak x ->
+             case sub of
+               SubstApply s _ -> hsubstTm s x
+               SubstSkip s -> do
+                   x' <- hsubstTm s x
+                   return $ either (Left. weaken) (Right . weaken) x'
+               SubstEnd       -> return (Right tm)
+               SubstWeak s    -> hsubstTm s (weaken tm)
+
+           Var v ->
+             case sub of
+               SubstApply _ f -> Left <$> f v
+               SubstSkip _    -> Right <$> foldLF (Var v)
+               SubstEnd       -> return $ Right $ tm
+               SubstWeak s    -> hsubstTm s (weaken tm)
+
+           Const _ ->
+             case sub of
+               SubstEnd -> return $ Right $ tm
+               SubstWeak s -> hsubstTm s (weaken tm)
+               _ -> error "impossible"
+
+           App r1 m2 -> do
+             r1' <- hsubstTm sub r1
+             m2' <- hsubst sub m2
+             case r1' of
+               Left (unfoldLF -> Lam _ _ m1') -> do
+                 Left <$> instantiateVar m1' m2'
+               Right r1'' ->
+                 Right <$> foldLF (App r1'' m2')
+               _ -> fail "hereditary substitution failed: ill-typed term"
+
+{-
+-}
+{-
+    And cs       -> onChange tm (foldLF . And) (mapM (hsubst tm0 v0 st0) cs)
     Unify r1 r2  ->
         case (hsubstTm r1 st0, hsubstTm r2 st0) of
            (Unchanged _, Unchanged _) -> Unchanged tm
            (q1, q2) -> do
              let f :: Either (f TERM, SimpleType) (f ATERM) -> ChangeT m (f ATERM)
+
+
+
+
+
+
+
                  f (Left (unfoldLF -> ATerm r, _)) = return r
                  f (Right r) = return r
                  f _ = fail "hereditary substitution failed: ill-typed term (in unify)"
              r1' <- f =<< q1
              r2' <- f =<< q2
              Changed (foldLF (Unify r1' r2'))
-    Forall nm a c -> onChange tm foldLF (Forall nm <$> hsubst tm0 v0 j st0 a <*> hsubst tm0 (v0+1) (j+1) st0 c)
-    Exists nm a c -> onChange tm foldLF (Exists nm <$> hsubst tm0 v0 j st0 a <*> hsubst tm0 (v0+1) (j+1) st0 c)
+    Forall nm a c -> onChange tm foldLF (Forall nm <$> hsubst tm0 v0 st0 a <*> hsubst tm0 (v0+1) st0 c)
+    Exists nm a c -> onChange tm foldLF (Exists nm <$> hsubst tm0 v0 st0 a <*> hsubst tm0 (v0+1) st0 c)
 
-    Sigma nm a g  -> onChange tm foldLF (Sigma nm <$> hsubst tm0 v0 j st0 a <*> hsubst tm0 (v0+1) (j+1) st0 g)
-    Goal m c      -> onChange tm foldLF (Goal <$> hsubst tm0 v0 j st0 m <*> hsubst tm0 v0 j st0 c)
+    Sigma nm a g  -> onChange tm foldLF (Sigma nm <$> hsubst tm0 v0 st0 a <*> hsubst tm0 (v0+1) st0 g)
+    Goal m c      -> onChange tm foldLF (Goal <$> hsubst tm0 v0 st0 m <*> hsubst tm0 v0 st0 c)
 
-    Const _ -> atermErr
-    Var _   -> atermErr
-    App _ _ -> atermErr
+-}
 
- where atermErr :: forall x. ChangeT m x
-       atermErr = fail "Do not call hsubst directly on terms of sort ATERM"
 
-       hsubstTm :: f ATERM
-                -> SimpleType
-                -> ChangeT m (Either (f TERM, SimpleType) (f ATERM))
+{-
 
-       hsubstTm tm st =
          case unfoldLF tm of
            Var v
              | v0 == v   -> do
@@ -686,7 +869,7 @@ hsubstLM tm0 !v0 !j st0 = \tm ->
            App r1 m2 ->
              case hsubstTm r1 st of
                Unchanged _ ->
-                 onChange (Right tm) (\m -> Right <$> foldLF (App r1 m)) (hsubst tm0 v0 j st m2)
+                 onChange (Right tm) (\m -> Right <$> foldLF (App r1 m)) (hsubst tm0 v0 st m2)
                m -> do
                  m2' <- hsubst tm0 v0 j st m2
                  m >>= \case
@@ -697,6 +880,8 @@ hsubstLM tm0 !v0 !j st0 = \tm ->
                      Changed (Right <$> foldLF (App r1' m2'))
                    _ ->
                      fail "hereditary substitution failed: ill-typed term"
+-}
+
 
 data Prec
   = TopPrec
@@ -705,106 +890,231 @@ data Prec
   | BinderPrec
  deriving (Eq)
 
+data Hyps (f :: Ctx * -> SORT -> *) (c :: Ctx *) where
+  HNil   :: Hyps f E
+  HCons  :: Hyps f γ -> Quant -> (b -> (String, f γ TYPE)) -> Hyps f (γ ::> b)
+
+lookupHyp :: LFModel f m
+          => Hyps f γ
+          -> Var γ
+          -> (f γ TYPE -> f γ' TYPE)
+          -> (String, Quant, f γ' TYPE)
+lookupHyp (HCons _ q f) (B b) w =
+  let (nm, a) = f b
+   in (nm, q, w (weaken a))
+lookupHyp (HCons h _ _) (F x) w =
+  lookupHyp h x (w . weaken)
+lookupHyp HNil _ _ = error "impossible"
+
+lookupVar :: LFModel f m
+          => Hyps f γ
+          -> Var γ
+          -> (String, Quant, f γ TYPE)
+lookupVar h v = lookupHyp h v id
+
+getName :: Set String
+        -> String
+        -> String
+getName ss nm = tryName ss (nm : [ nm++show i | i <- [0..] ])
+ where
+  tryName ss (x:xs)
+    | Set.member x ss = tryName ss xs
+    | otherwise = x
+  tryName _ [] = undefined
+
+freshName :: String
+          -> Set String
+          -> (String, Set String)
+freshName nm nms =
+  let nm' = getName nms nm
+   in (nm' , Set.insert nm' nms)
+
+extendHyps :: Hyps f γ -> String -> Quant -> f γ TYPE -> Hyps f (γ ::> ())
+extendHyps h nm q a = HCons h q (\_ -> (nm,a))
+
 prettyLF
-      :: LFModel f a c m
+      :: (WFContext γ, LFModel f m)
       => Prec
-      -> f s
+      -> Set String
+      -> Hyps f γ
+      -> f γ s
       -> m Doc
-prettyLF prec x =
+prettyLF prec nms hyps x =
   case unfoldLF x of
+    Weak x ->
+      case hyps of
+        HCons h _ _ -> prettyLF prec nms h x
+        _ -> error "impossible"
+
     Type -> return $ text "Type"
     KPi nm a k
-      | freeVar 0 k -> do
-         nm' <- freshName nm
-         adoc <- ppLF BinderPrec a
-         kdoc <- extendContext nm' QPi a $ ppLF TopPrec k
+      | freeVar (B ()) k -> do
+         let (nm',nms') = freshName nm nms
+         adoc <- ppLF BinderPrec nms hyps a
+         kdoc <- ppLF TopPrec nms' (extendHyps hyps nm' QPi a) k
          return $ (if prec /= TopPrec then parens else id) $
            text "Π" <> text nm' <+> colon <+> adoc <+> comma <> nest 2 (softline <> kdoc)
       | otherwise -> do
-         adoc <- ppLF BinderPrec a
-         kdoc <- extendContext "_" QPi (error "unbound name!") $ ppLF TopPrec k
+         adoc <- ppLF BinderPrec nms hyps a
+         kdoc <- ppLF TopPrec nms (extendHyps hyps "_" QPi (error "unbound name!")) k
          return $ group $ (if prec /= TopPrec then parens else id) $
            align (adoc <+> text "⇒" <> line <> kdoc)
-    AType x -> group . (linebreak <>) . hang 2 <$> (ppLF prec x)
+    AType x -> group . (linebreak <>) . hang 2 <$> (ppLF prec nms hyps x)
     TyPi nm a1 a2
-      | freeVar 0 a2 -> do
-         nm' <- freshName nm
-         a1doc <- ppLF BinderPrec a1
-         a2doc <- extendContext nm' QPi a1 $ ppLF TopPrec a2
+      | freeVar (B ()) a2 -> do
+         let (nm',nms') = freshName nm nms
+         a1doc <- ppLF BinderPrec nms hyps a1
+         a2doc <- ppLF TopPrec nms' (extendHyps hyps nm' QPi a1) a2
          return $ (if prec /= TopPrec then parens else id) $
            text "Π" <> text nm' <+> colon <+> a1doc <> comma <> nest 2 (softline <> a2doc)
       | otherwise -> do
-         a1doc <- ppLF BinderPrec a1
-         a2doc <- extendContext "_" QPi (error "unbound name!") $ ppLF TopPrec a2
+         a1doc <- ppLF BinderPrec nms hyps a1
+         a2doc <- ppLF TopPrec nms (extendHyps hyps "_" QPi (error "unbound name!")) a2
          return $! group $ (if prec /= TopPrec then parens else id) $
            (align (a1doc <+> text "⇒" <> softline <> a2doc))
     TyConst x -> return $ pretty x
     TyApp p a -> do
-         pdoc <- ppLF AppLPrec p
-         adoc <- ppLF AppRPrec a
+         pdoc <- ppLF AppLPrec nms hyps p
+         adoc <- ppLF AppRPrec nms hyps a
          return $! group $ (if prec == AppRPrec then parens else id) $
             (pdoc <> line <> adoc)
     ATerm x
-      | prec == TopPrec -> group . (linebreak <>) . hang 2 <$> (ppLF prec x)
-      | otherwise -> hang 2 <$> ppLF prec x
+      | prec == TopPrec ->
+           group . (linebreak <>) . hang 2 <$> (ppLF prec nms hyps x)
+      | otherwise -> hang 2 <$> ppLF prec nms hyps x
     Lam nm a m -> do
-         nm' <- freshName nm
-         adoc <- ppLF BinderPrec a
-         mdoc <- extendContext nm' QLam a $ ppLF TopPrec m
+         let (nm',nms') = freshName nm nms
+         adoc <- ppLF BinderPrec nms hyps a
+         mdoc <- ppLF TopPrec nms' (extendHyps hyps nm' QLam a) m
          return $! (if prec /= TopPrec then parens else id) $
            text "λ" <> text nm' <+> colon <+> adoc <> comma <> nest 2 (softline <> mdoc)
     Const x -> return $ pretty x
     App m1 m2 -> do
-         m1doc <- ppLF AppLPrec m1
-         m2doc <- ppLF AppRPrec m2
+         m1doc <- ppLF AppLPrec nms hyps m1
+         m2doc <- ppLF AppRPrec nms hyps m2
          return $! group $ (if prec == AppRPrec then parens else id) $
             (m1doc <> line <> m2doc)
 
-    Var v -> do
-         d <- contextDepth
-         if d > v then
-           text <$> lookupVariableName (LFVar (d - v - 1))
-         else
-           return $ text ("#" ++ show v)
-           --fail "Unbound variable while pretty printing"
+    Var v ->
+      case hyps of
+        HCons _ _ f -> 
+          let (nm,_) = f v in return $ text nm
+        _ -> error "impossible"
 
     Unify r1 r2 -> do
-         r1doc <- ppLF TopPrec r1
-         r2doc <- ppLF TopPrec r2
+         r1doc <- ppLF TopPrec nms hyps r1
+         r2doc <- ppLF TopPrec nms hyps r2
          return $ group (r1doc <+> text "=" <> line <> r2doc)
 
     And [] -> return $ text "⊤"
     And cs -> do
-         cs' <- mapM (ppLF TopPrec) cs
+         cs' <- mapM (ppLF TopPrec nms hyps) cs
          return $ align $ cat $ punctuate (text " ∧ ") cs'
 
     Forall nm a c -> do
-         nm' <- freshName nm
-         adoc <- ppLF BinderPrec a
-         cdoc <- extendContext nm' QForall a $ ppLF TopPrec c
+         let (nm',nms') = freshName nm nms
+         adoc <- ppLF BinderPrec nms hyps a
+         cdoc <- ppLF TopPrec nms' (extendHyps hyps nm' QForall a) c
          return $ (if prec /= TopPrec then parens else id) $
            text "∀" <> text nm' <+> colon <+> adoc <> comma <> nest 2 (softline <> cdoc)
 
     Exists nm a c -> do
-         nm' <- freshName nm
-         adoc <- ppLF BinderPrec a
-         cdoc <- extendContext nm' QExists a $ ppLF TopPrec c
+         let (nm',nms') = freshName nm nms
+         adoc <- ppLF BinderPrec nms hyps a
+         cdoc <- ppLF TopPrec nms' (extendHyps hyps nm' QExists a) c
          return $ (if prec /= TopPrec then parens else id) $
            text "∃" <> text nm' <+> colon <+> adoc <> comma <> nest 2 (softline <> cdoc)
 
     Sigma nm a g -> do
-         nm' <- freshName nm
-         adoc <- ppLF BinderPrec a
-         gdoc <- extendContext nm' QSigma a $ ppLF TopPrec g
+         let (nm',nms') = freshName nm nms
+         adoc <- ppLF BinderPrec nms hyps a
+         gdoc <- ppLF TopPrec nms' (extendHyps hyps nm' QSigma a) g
          return $ (if prec /= TopPrec then parens else id) $
            text "Σ" <> text nm' <+> colon <+> adoc <> comma <> nest 2 (softline <> gdoc)
 
     Goal m c -> do
-         mdoc <- ppLF TopPrec m
-         cdoc <- ppLF TopPrec c
+         mdoc <- ppLF TopPrec nms hyps m
+         cdoc <- ppLF TopPrec nms hyps c
          return $ group $
            text "{" <+> mdoc <+> text "|" <> nest 2 (softline <> cdoc <+> text "}")
 
+
+data Var :: Ctx * -> * where
+  F :: Var γ -> Var (γ ::> b)
+  B :: b     -> Var (γ ::> b)
+
+deriving instance (Eq (Var γ), Eq b) => Eq (Var (γ::>b))
+deriving instance (Ord (Var γ), Ord b) => Ord (Var (γ::>b))
+deriving instance (Show (Var γ), Show b) => Show (Var (γ::>b))
+
+data VarSet :: Ctx * -> * where
+  VarSetEmpty :: VarSet γ
+  VarSetCons  :: VarSet γ -> Set b -> VarSet (γ ::> b)
+
+mergeVarSet :: WFContext γ => VarSet γ -> VarSet γ -> VarSet γ
+mergeVarSet VarSetEmpty y = y
+mergeVarSet x VarSetEmpty = x
+mergeVarSet (VarSetCons v b) (VarSetCons v' b') =
+   VarSetCons (mergeVarSet v v') (Set.union b b')
+
+singleVarSet :: WFContext γ => Var γ -> VarSet γ
+singleVarSet (F f) = VarSetCons (singleVarSet f) Set.empty
+singleVarSet (B b) = VarSetCons VarSetEmpty (Set.singleton b)
+
+emptyVarSet :: VarSet γ
+emptyVarSet = VarSetEmpty
+
+inVarSet :: WFContext γ => VarSet γ -> Var γ -> Bool
+inVarSet VarSetEmpty _ = False
+inVarSet (VarSetCons s _) (F v) = inVarSet s v
+inVarSet (VarSetCons _ s) (B b) = Set.member b s
+
+freeVars :: (WFContext γ, LFModel f m)
+         => f γ s
+         -> VarSet γ
+freeVars = foldFree mergeVarSet emptyVarSet singleVarSet 
+
+freeVar :: (WFContext γ, LFModel f m) => Var γ -> f γ s -> Bool
+freeVar v tm = inVarSet (freeVars tm) v
+
+
+foldFree :: forall f m γ a s
+          . LFModel f m
+         => (a -> a -> a)
+         -> a
+         -> (Var γ -> a)
+         -> f γ s
+         -> a
+foldFree merge z = go
+ where
+  go :: forall γ s. (Var γ -> a) -> f γ s -> a
+  go f tm =
+    let f' :: forall b. (Var (γ ::> b) -> a)
+        f' (B _) = z
+        f' (F x) = f x
+     in
+    case unfoldLF tm of
+      Weak x -> go (f . F) x
+      Type -> z
+      KPi _ a k -> go f a `merge` go f' k
+      AType x -> go f x
+      TyPi _ a1 a2 -> go f a1 `merge` go f' a2
+      TyConst _ -> z
+      TyApp p a -> go f p `merge` go f a  
+      Lam _ a m -> go f a `merge` go f' m
+      Const _ -> z
+      ATerm x -> go f x
+      App r m -> go f r `merge` go f m
+      Var v -> f (B v)
+      Unify r1 r2 -> go f r1 `merge` go f r2
+      And cs -> foldr merge z $ map (go f) cs
+      Forall _ a c -> go f a `merge` go f' c
+      Exists _ a c -> go f a `merge` go f' c
+      Sigma _ a g -> go f a `merge` go f' g
+      Goal m c -> go f m `merge` go f c
+
+
+{-
 freeVarLF :: LFModel f a c m
           => Int
           -> f s
@@ -831,3 +1141,4 @@ freeVarLF !i tm =
 
     Sigma _ a g -> freeVar i a || freeVar (i+1) g
     Goal m c -> freeVar i m || freeVar i c
+-}

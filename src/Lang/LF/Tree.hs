@@ -25,45 +25,39 @@ where
 
 import           Control.Monad.Except
 import           Control.Monad.Reader
-import qualified Data.Foldable as Fold
+--import qualified Data.Foldable as Fold
 import           Data.Map (Map)
 import qualified Data.Map as Map
-import           Data.Set (Set)
-import qualified Data.Set as Set
-import           Data.Sequence (Seq, (|>))
-import qualified Data.Sequence as Seq
+--import           Data.Set (Set)
+--import qualified Data.Set as Set
+--import           Data.Sequence (Seq, (|>))
+--import qualified Data.Sequence as Seq
 
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
 import Lang.LF.Model
-import Lang.LF.ChangeT
+--import Lang.LF.ChangeT
 
-data LFTree a c (s::SORT) =
-  LFTree { lfTree :: LF (LFTree a c) a c s
-         , lfDepth :: Int
+newtype LFTree a c γ (s::SORT) =
+  LFTree { lfTree :: LF (LFTree a c) γ s
          }
 
-type M a c = ReaderT (Set String, Seq (String, Quant, LFTree a c TYPE), Signature a c) (Except String)
+type instance LFTypeConst (LFTree a c) = a
+type instance LFConst (LFTree a c) = c
 
-getName :: Set String
-        -> String
-        -> String
-getName ss nm = tryName ss (nm : [ nm++show i | i <- [0..] ])
- where
-  tryName ss (x:xs)
-    | Set.member x ss = tryName ss xs
-    | otherwise = x
-  tryName _ [] = undefined
+type M a c = ReaderT (Signature a c) (Except String)
 
 instance (Pretty a, Pretty c, Ord a, Ord c)
-    => LFModel (LFTree a c) a c (M a c) where
+    => LFModel (LFTree a c) (M a c) where
   unfoldLF = lfTree
-  depth = lfDepth
-  foldLF x = do
-    d <- contextDepth
-    return $ LFTree x d
-  hsubst = hsubstLM
+  foldLF = return . LFTree
+  hsubst = hsubstLF
+  weaken = LFTree . Weak
+  ppLF = prettyLF
   validateKind = validateKindLF
+
+
+{-
   validateType = validateTypeLF
   inferKind = inferKindLF
   inferType = inferTypeLF
@@ -136,47 +130,48 @@ dumpContextLF = do
        dumpq QForall = text "∀"
        dumpq QExists = text "∃"
        dumpq QSigma = text "Σ"
+-}
 
 infixr 0 ::.
 infixr 0 :.
 
 data SigDecl a c
-  = a ::. (M a c (LFTree a c KIND))
-  | c :. (M a c (LFTree a c TYPE))
+  = a ::. (M a c (LFTree a c E KIND))
+  | c :. (M a c (LFTree a c E TYPE))
 
 emptySig :: Signature a c
 emptySig = Sig Map.empty Map.empty
 
 data Signature a c
   = Sig
-    { sigFamilies :: Map a (LFTree a c KIND)
-    , sigTerms    :: Map c (LFTree a c TYPE)
+    { sigFamilies :: Map a (LFTree a c E KIND)
+    , sigTerms    :: Map c (LFTree a c E TYPE)
     }
 
 addTypeConstant :: (Ord a, Ord c, Pretty a, Pretty c)
                 => Signature a c
                 -> a
-                -> M a c (LFTree a c KIND)
+                -> M a c (LFTree a c E KIND)
                 -> Except String (Signature a c)
 addTypeConstant sig nm m =
   case Map.lookup nm (sigFamilies sig) of
     Just _ -> fail $ unwords ["Type constant",show (pretty nm),"declared multiple times"]
-    Nothing -> flip runReaderT (Set.empty, Seq.empty, sig) $ do
+    Nothing -> flip runReaderT sig $ do
            k <- m
-           validateKind k
+           -- validateKind k
            return sig{ sigFamilies = Map.insert nm k (sigFamilies sig) }
 
 addTermConstant :: (Ord a, Ord c, Pretty a, Pretty c)
                 => Signature a c
                 -> c
-                -> M a c (LFTree a c TYPE)
+                -> M a c (LFTree a c E TYPE)
                 -> Except String (Signature a c)
 addTermConstant sig nm m =
   case Map.lookup nm (sigTerms sig) of
     Just _ -> fail $ unwords ["Term constant",show (pretty nm),"declared multiple times"]
-    Nothing -> flip runReaderT (Set.empty, Seq.empty, sig) $ do
+    Nothing -> flip runReaderT sig $ do
            x <- m
-           validateType x
+           -- validateType x
            return sig{ sigTerms = Map.insert nm x (sigTerms sig) }
 
 buildSignature :: (Ord a, Ord c, Pretty a, Pretty c)
@@ -184,14 +179,14 @@ buildSignature :: (Ord a, Ord c, Pretty a, Pretty c)
                -> Signature a c
 buildSignature = either error id . runExcept . foldM f emptySig
  where f sig (a ::. x) = addTypeConstant sig a x
-       f sig (c :. x) = addTermConstant sig c x
+       f sig (c :. x)  = addTermConstant sig c x
 
 runM :: Signature a c -> M a c x -> x
-runM sig = either error id . runExcept . flip runReaderT (Set.empty, Seq.empty, sig)
+runM sig = either error id . runExcept . flip runReaderT sig
 
 mkTerm :: (Ord a, Ord c, Pretty a, Pretty c)
-       => Signature a c -> M a c (LFTree a c TERM) -> LFTree a c TERM
+       => Signature a c -> M a c (LFTree a c E TERM) -> LFTree a c E TERM
 mkTerm sig m = runM sig $ do
     m' <- m
-    _ <- inferType m'
+    -- _ <- inferType m'
     return m'

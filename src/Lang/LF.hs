@@ -1,11 +1,20 @@
 module Lang.LF
-( LFModel
-, type SORT
+( -- * LF Sorts
+  type SORT
 , KIND
 , TYPE
 , TERM
 , CON
 , GOAL
+, type Ctx(..)
+
+  -- * LF Models 
+, LFModel
+, WFContext
+, WFContextRec
+, IsBoundVar
+
+{-
 , KindView(..)
 , TypeView(..)
 , TermView(..)
@@ -18,7 +27,12 @@ module Lang.LF
 , checkType
 , alphaEq
 , headConstant
+-}
 , ppLF
+, Prec(..)
+, Hyps(..)
+
+  -- * Term Construction
 , lf_type
 , kPi
 , kArrow
@@ -30,6 +44,11 @@ module Lang.LF
 , var
 , tmConst
 , mkLam
+, LFApplication (..)
+, LFFunc(..)
+, LFPi(..)
+
+{-
 , underLambda
 , lookupVariable
 , lookupVariableName
@@ -47,10 +66,7 @@ module Lang.LF
 , weaken
 , strengthen
 , LFVar
-, LFApplication (..)
-, LFFunc(..)
-, LFPi(..)
-, Prec(..)
+-}
 ) where
 
 import Lang.LF.Model
