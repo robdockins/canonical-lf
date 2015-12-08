@@ -29,7 +29,7 @@ import           Control.Monad.Reader
 import           Data.Map (Map)
 import qualified Data.Map as Map
 --import           Data.Set (Set)
---import qualified Data.Set as Set
+import qualified Data.Set as Set
 --import           Data.Sequence (Seq, (|>))
 --import qualified Data.Sequence as Seq
 
@@ -55,22 +55,26 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
   weaken = LFTree . Weak
   ppLF = prettyLF
   validateKind = validateKindLF
-
-
-{-
   validateType = validateTypeLF
   inferKind = inferKindLF
   inferType = inferTypeLF
   inferAType = inferATypeLF
-  alphaEq = alphaEqLF
-  weaken = weakenLF
+  alphaEq = alphaEqLF id id
+
+  constKind a = do
+     sig <- ask
+     case Map.lookup a (sigFamilies sig) of
+       Nothing -> fail $ unwords ["type family lookup failed:", show (pretty a)]
+       Just x  -> return x
+  constType c = do
+     sig <- ask
+     case Map.lookup c (sigTerms sig) of
+       Nothing -> fail $ unwords ["term constant lookup failed:", show (pretty c)]
+       Just x  -> return x
+
   freeVar = freeVarLF
-  ppLF = prettyLF
-  headConstant = headConstantLF
-  dumpContext = dumpContextLF
-  contextDepth = do
-     (_,ctx,_) <- ask
-     return $ Seq.length ctx
+
+{-
   kindView = kindViewLF
   typeView = typeViewLF
   termView = termViewLF
@@ -82,40 +86,6 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
           _ -> Unchanged tm
 
       _ -> fail "Expected a lambda term"
-
-  extendContext nm qnt a action =
-     withReaderT (\(nms,ctx,sig) -> (Set.insert nm nms, ctx |> (nm,qnt,a), sig))
-                 action
-  freshName nm = do
-     (nms,_,_) <- ask
-     return $ getName nms nm
-  lookupVariable (LFVar v) = do
-     (_,ctx,_) <- ask
-     let d = Seq.length ctx
-     if 0 <= v && v < d then
-       let (_,_,a) = Seq.index ctx v in
-       let j = d - v in
-       runChangeT $ weaken 0 j a
-     else
-       fail $ unwords ["Variable out of scope (lookup):", show v]
-  lookupVariableName (LFVar v) = do
-     (_,ctx,_) <- ask
-     let d = Seq.length ctx
-     if 0 <= v && v < d then
-       let (nm,_,_) = Seq.index ctx v in
-       return nm
-     else
-       fail $ unwords ["Variable out of scope (lookup name):", show v]
-  constKind a = do
-     (_,_,sig) <- ask
-     case Map.lookup a (sigFamilies sig) of
-       Nothing -> fail $ unwords ["type family lookup failed:", show (pretty a)]
-       Just x  -> return x
-  constType c = do
-     (_,_,sig) <- ask
-     case Map.lookup c (sigTerms sig) of
-       Nothing -> fail $ unwords ["term constant lookup failed:", show (pretty c)]
-       Just x  -> return x
 
 dumpContextLF :: (Ord a, Ord c, Pretty a, Pretty c) => M a c Doc
 dumpContextLF = do
@@ -158,7 +128,7 @@ addTypeConstant sig nm m =
     Just _ -> fail $ unwords ["Type constant",show (pretty nm),"declared multiple times"]
     Nothing -> flip runReaderT sig $ do
            k <- m
-           -- validateKind k
+           validateKind Set.empty HNil k
            return sig{ sigFamilies = Map.insert nm k (sigFamilies sig) }
 
 addTermConstant :: (Ord a, Ord c, Pretty a, Pretty c)
@@ -171,7 +141,7 @@ addTermConstant sig nm m =
     Just _ -> fail $ unwords ["Term constant",show (pretty nm),"declared multiple times"]
     Nothing -> flip runReaderT sig $ do
            x <- m
-           -- validateType x
+           validateType Set.empty HNil x
            return sig{ sigTerms = Map.insert nm x (sigTerms sig) }
 
 buildSignature :: (Ord a, Ord c, Pretty a, Pretty c)
@@ -188,5 +158,5 @@ mkTerm :: (Ord a, Ord c, Pretty a, Pretty c)
        => Signature a c -> M a c (LFTree a c E TERM) -> LFTree a c E TERM
 mkTerm sig m = runM sig $ do
     m' <- m
-    -- _ <- inferType m'
+    _ <- inferType Set.empty HNil m'
     return m'

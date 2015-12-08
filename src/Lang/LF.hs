@@ -21,13 +21,12 @@ module Lang.LF
 , kindView
 , typeView
 , termView
+-}
 , validateKind
 , validateType
 , inferType
 , checkType
 , alphaEq
-, headConstant
--}
 , ppLF
 , Prec(..)
 , Hyps(..)

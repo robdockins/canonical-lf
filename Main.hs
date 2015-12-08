@@ -7,17 +7,17 @@ import Prelude hiding (pi, abs)
 --import           Data.Sequence (Seq, (|>))
 --import qualified Data.Sequence as Seq
 import qualified Data.Set as Set
-import           Data.Map (Map)
-import qualified Data.Map as Map
+--import           Data.Map (Map)
+--import qualified Data.Map as Map
 import           System.IO
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
 import           Lang.LF
-import           Lang.LF.ChangeT
+--import           Lang.LF.ChangeT
 import           Lang.LF.Tree hiding (M)
 import qualified Lang.LF.Tree as Tree
 
-import qualified Debug.Trace as Debug
+--import qualified Debug.Trace as Debug
 
 type LF = Tree.LFTree String String
 type Sig = Tree.Signature String String
@@ -348,8 +348,6 @@ testTerm =
 --evalTerm = mkTerm sig $ runChangeT $ eval testTerm
 
 
-
-
 main = sig `seq` do
 {-
    let x :: LF GOAL
@@ -361,8 +359,9 @@ main = sig `seq` do
 -}
 
    let x :: LF E TERM
-       x = typing2 -- testTerm
+       x = typing2
    displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec Set.empty HNil x
    putStrLn ""
-   --displayIO stdout $ renderSmart 0.7 80 $ runM sig $ (ppLF TopPrec =<< inferType x)
-   --putStrLn ""
+   displayIO stdout $ renderSmart 0.7 80 $ runM sig $
+     (ppLF TopPrec Set.empty HNil =<< inferType Set.empty HNil x)
+   putStrLn ""
