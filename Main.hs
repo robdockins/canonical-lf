@@ -6,6 +6,7 @@ import Prelude hiding (pi, abs)
 
 --import           Data.Sequence (Seq, (|>))
 --import qualified Data.Sequence as Seq
+import           Data.Set (Set)
 import qualified Data.Set as Set
 --import           Data.Map (Map)
 --import qualified Data.Map as Map
@@ -13,7 +14,7 @@ import           System.IO
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
 import           Lang.LF
---import           Lang.LF.ChangeT
+import           Lang.LF.ChangeT
 import           Lang.LF.Tree hiding (M)
 import qualified Lang.LF.Tree as Tree
 
@@ -22,7 +23,7 @@ import qualified Lang.LF.Tree as Tree
 type LF = Tree.LFTree String String
 type Sig = Tree.Signature String String
 type M = Tree.M String String
-
+type H = Hyps LF
 
 sig :: Sig
 sig = buildSignature
@@ -199,7 +200,6 @@ typing2 = mkTerm sig $
             )
       )
 
-{-
 pattern AppP m1 m2 <-
   (termView -> VConst "app" [m1, m2])
 pattern LamP m <-
@@ -213,6 +213,7 @@ pattern SucP n <-
 pattern ArrowP t1 t2 <-
   (termView -> VConst "arrow" [t1,t2])
 
+{-
 typecheck, typecheck' :: Map (LFVar LF) (M (LF TERM)) -> LF TERM -> M (LF GOAL)
 
 typecheck γ x = do
@@ -275,6 +276,7 @@ typecheck' γ (NatElimP z s n) = do
                              , unify (return tyz) (var t)
                              , unify (return tys) (arrow (var t) (var t))
                              , return cz, return cs, return cn])
+-}
 {-    
 typecheck (LamP t m) = do
   g <- typecheck m
@@ -282,8 +284,11 @@ typecheck (LamP t m) = do
      goal (tmConst "of_lam" @@ return t @@ return 
 -}
 
+
 -- CBV reduction to head-normal form
-eval :: LF TERM -> ChangeT M (LF TERM)
+eval :: (?nms :: Set String, ?hyps :: H γ, WFContext γ)
+     => LF γ TERM
+     -> ChangeT M (LF γ TERM)
 
 -- β reduction
 eval (AppP (LamP body) arg) = do
@@ -301,9 +306,11 @@ eval tm@(AppP m1 m2) = do
         eval =<< Changed (app m1' (return m2))
 
 -- evaluation under lambdas
-eval tm@(LamP m) =
-    case underLambda m eval of
-      Changed m' -> Changed (lam m')
+eval tm@(LamP (termView -> VLam k)) =
+  k $ \wk nm _var tp body -> do
+    case eval body of
+      Changed body' -> do
+        Changed (lam (wk <$> mkLam nm (return tp) body'))
       _ -> Unchanged tm
 
 -- nat recursor: zero case
@@ -316,7 +323,6 @@ eval (NatElimP z s (SucP n)) =
 
 eval t = Unchanged t
 
--}
 
 five :: M (LF E TERM)
 five = suc $ suc $ suc $ suc $ suc $ zero
@@ -330,7 +336,7 @@ add = lam (λ"x" tm $ \x ->
         nat_elim (var x) (lam (λ"n" tm $ \n -> suc (var n))) (var y)))
 
 composeN :: M (LF E TERM)
-composeN = do
+composeN =
   lam (λ"f" tm $ \f ->
     lam (λ"n" tm $ \n ->
       nat_elim (lam (λ"q" tm $ \q -> var q))
@@ -341,12 +347,14 @@ composeN = do
 
 testTerm :: LF E TERM
 testTerm =
-  --mkTerm sig $ composeN unit `app` (lam unit (λ"q" tm $ \q -> tmConst "F" `app` q)) `app` five -- `app` tt
-  mkTerm sig $ add `app` three `app` five
+  mkTerm sig $ composeN `app` (lam (λ"q" tm $ \q -> tmConst "F" `app` var q)) `app` five `app` tt
+  --mkTerm sig $ add `app` three `app` five
 
---evalTerm :: LF TERM
---evalTerm = mkTerm sig $ runChangeT $ eval testTerm
-
+evalTerm :: LF E TERM
+evalTerm =
+  let ?nms = Set.empty
+      ?hyps = HNil
+   in mkTerm sig $ runChangeT $ eval testTerm
 
 main = sig `seq` do
 {-
@@ -359,9 +367,10 @@ main = sig `seq` do
 -}
 
    let x :: LF E TERM
-       x = typing2
-   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec Set.empty HNil x
+       x = evalTerm
+   let ?nms = Set.empty
+   let ?hyps = HNil
+   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec x
    putStrLn ""
-   displayIO stdout $ renderSmart 0.7 80 $ runM sig $
-     (ppLF TopPrec Set.empty HNil =<< inferType Set.empty HNil x)
+   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ (ppLF TopPrec =<< inferType x)
    putStrLn ""

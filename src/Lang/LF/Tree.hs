@@ -74,8 +74,11 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
 
   freeVar = freeVarLF
 
+  kindView = kindViewLF id
+  typeView = typeViewLF id
+  termView = termViewLF id id
 {-
-  kindView = kindViewLF
+
   typeView = typeViewLF
   termView = termViewLF
   underLambda tm action =
@@ -128,7 +131,9 @@ addTypeConstant sig nm m =
     Just _ -> fail $ unwords ["Type constant",show (pretty nm),"declared multiple times"]
     Nothing -> flip runReaderT sig $ do
            k <- m
-           validateKind Set.empty HNil k
+           let ?nms = Set.empty
+           let ?hyps = HNil
+           validateKind k
            return sig{ sigFamilies = Map.insert nm k (sigFamilies sig) }
 
 addTermConstant :: (Ord a, Ord c, Pretty a, Pretty c)
@@ -141,7 +146,9 @@ addTermConstant sig nm m =
     Just _ -> fail $ unwords ["Term constant",show (pretty nm),"declared multiple times"]
     Nothing -> flip runReaderT sig $ do
            x <- m
-           validateType Set.empty HNil x
+           let ?nms = Set.empty
+           let ?hyps = HNil
+           validateType x
            return sig{ sigTerms = Map.insert nm x (sigTerms sig) }
 
 buildSignature :: (Ord a, Ord c, Pretty a, Pretty c)
@@ -158,5 +165,7 @@ mkTerm :: (Ord a, Ord c, Pretty a, Pretty c)
        => Signature a c -> M a c (LFTree a c E TERM) -> LFTree a c E TERM
 mkTerm sig m = runM sig $ do
     m' <- m
-    _ <- inferType Set.empty HNil m'
+    let ?nms = Set.empty
+    let ?hyps = HNil
+    _ <- inferType m'
     return m'

@@ -10,28 +10,37 @@ module Lang.LF
 
   -- * LF Models 
 , LFModel
+, Hyps(..)
 , WFContext
 , WFContextRec
 , IsBoundVar
+, LiftClosed(..)
+, AutoWeaken(..)
+, CtxDiff
+, CtxAppend
+, CtxSub
 
-{-
+  -- * Term views
 , KindView(..)
 , TypeView(..)
 , TermView(..)
 , kindView
 , typeView
 , termView
--}
+
+  -- * LF type system
 , validateKind
 , validateType
 , inferType
 , checkType
 , alphaEq
+
+  -- * Printing terms
 , ppLF
 , Prec(..)
-, Hyps(..)
 
   -- * Term Construction
+, weaken
 , lf_type
 , kPi
 , kArrow
@@ -43,14 +52,6 @@ module Lang.LF
 , var
 , tmConst
 , mkLam
-, LFApplication (..)
-, LFFunc(..)
-, LFPi(..)
-
-{-
-, underLambda
-, lookupVariable
-, lookupVariableName
 , unify
 , conj
 , cTrue
@@ -58,13 +59,17 @@ module Lang.LF
 , cExists
 , sigma
 , goal
+, LFApplication (..)
+, LFFunc(..)
+, LFPi(..)
+
+
+{-
+, underLambda
 , underGoal
 , solve
 , dumpContext
-, autoweaken
-, weaken
 , strengthen
-, LFVar
 -}
 ) where
 
