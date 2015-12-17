@@ -45,6 +45,7 @@ data Ctx k = E | Ctx k ::> k
 
 type family LFTypeConst (f :: Ctx * -> SORT -> *) :: *
 type family LFConst (f :: Ctx * -> SORT -> *) :: *
+type family LFUVar (f :: Ctx * -> SORT -> *) :: *
 
 -- | The syntax algebra of canonical LF terms, parameterized
 --   by the type of subterms `f`, the type `a` of type family
@@ -65,7 +66,9 @@ data LF (f :: Ctx * -> SORT -> *) :: Ctx * -> SORT -> * where
   Var    :: !b -> LF f (γ ::> b) ATERM
   Const  :: !(LFConst f) -> LF f E ATERM
   App    :: !(f γ ATERM) -> !(f γ TERM) -> LF f γ ATERM
+  UVar   :: LFUVar f -> LF f E ATERM
 
+  Fail   :: LF f E CON
   Unify  :: !(f γ ATERM) -> !(f γ ATERM) -> LF f γ CON
   And    :: [f γ CON] -> LF f γ CON
   Forall :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) CON) -> LF f γ CON
@@ -97,14 +100,10 @@ kindViewLF :: forall f m γ γ'
            -> KindView f m γ
 kindViewLF w k =
   case unfoldLF k of
-    Weak x -> let ?hyps = weakenHyps ?hyps
-               in kindViewLF (w . weaken) x
+    Weak x -> weakenCtx $ kindViewLF (w . weaken) x
     Type -> VType
     KPi nm a k -> VKPi $ \cont -> do
-       let (nm',nms') = freshName nm ?nms
-       let ?nms  = nms'
-       let ?hyps = extendHyps ?hyps nm' QPi a
-       cont w nm' (B ()) a k
+       extendCtx nm QPi a $ cont w nm (B ()) a k
 
 data TypeView f m γ
  = VTyConst (LFTypeConst f) [f γ TERM]
@@ -125,15 +124,10 @@ typeViewLF :: forall f m γ γ'
            -> TypeView f m γ
 typeViewLF w a =
   case unfoldLF a of
-    Weak x ->
-       let ?hyps = weakenHyps ?hyps
-        in typeViewLF (w . weaken) x
+    Weak x -> weakenCtx $ typeViewLF (w . weaken) x
     AType p -> go w [] p
-    TyPi nm a1 a2 -> VTyPi $ \cont -> do
-       let (nm',nms') = freshName nm ?nms
-       let ?hyps = extendHyps ?hyps nm' QPi a1
-       let ?nms = nms'
-       cont w nm' (B ()) a1 a2
+    TyPi nm a1 a2 -> VTyPi $ \cont ->
+       extendCtx nm QPi a1 $ cont w nm (B ()) a1 a2
 
   where go :: forall γ γ'
             . WFContext γ'
@@ -150,10 +144,11 @@ typeViewLF w a =
 data TermView f m γ
  = VConst (LFConst f) [f γ TERM]
  | VVar (Var γ) [f γ TERM]
- | VLam (forall x.
+ | VUVar (LFUVar f) [f γ TERM]
+ | VLam String
+         (forall x.
            (forall   γ'. (WFContext γ', ?nms :: Set String, ?hyps :: Hyps f (γ'::>()))
-                      => (forall s. f γ' s -> f γ s)
-                      -> String
+                      => Weakening γ' γ  --(forall s. f γ' s -> f γ s)
                       -> Var (γ'::> ())
                       -> f γ' TYPE
                       -> f (γ'::> ()) TERM
@@ -162,59 +157,122 @@ data TermView f m γ
 
 termViewLF :: forall f m γ γ'
             . (WFContext γ', LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ')
-           => (forall s. f γ' s -> f γ s)
+           => Weakening γ' γ   --(forall s. f γ' s -> f γ s)
            -> (Var γ' -> Var γ)
            -> f γ' TERM
            -> TermView f m γ
 termViewLF w wv m =
   case unfoldLF m of
-    Weak x ->
-      let ?hyps = weakenHyps ?hyps
-       in termViewLF (w . weaken) (wv . F) x
+    Weak x -> weakenCtx $ termViewLF (WeakL w) (wv . F) x
     ATerm r -> go w wv [] r
-    Lam nm a m' -> VLam $ \cont -> do
-       let (nm', nms') = freshName nm ?nms
-       let ?nms = nms'
-       let ?hyps = extendHyps ?hyps nm' QLam a
-       cont w nm' (B ()) a m'
+    Lam nm a m' -> VLam nm $ \cont -> do
+       extendCtx nm QLam a $ cont w (B ()) a m'
 
  where go :: forall γ γ'
             . WFContext γ'
-           => (forall s. f γ' s -> f γ s)
+           => Weakening γ' γ --(forall s. f γ' s -> f γ s)
            -> (Var γ' -> Var γ)
            -> [f γ TERM]
            -> f γ' ATERM
            -> TermView f m γ
        go w wv args r =
          case unfoldLF r of
-           Weak x   -> go (w . weaken) (wv . F) args x
+           Weak x   -> go (WeakL w) (wv . F) args x
            Var v    -> VVar (wv (B v)) args
            Const c  -> VConst c args
-           App r' m -> go w wv (w m : args) r'
+           UVar u   -> VUVar u args
+           App r' m -> go w wv (weakening w m : args) r'
 
 
-{-strengthen :: LFModel f a c m
-           => LFVar f
-           -> f s
-           -> m (f s)
-strengthen (LFVar v) x = do
-   d <- contextDepth
-   if( d > v ) then
-     let i = d - v - 1 in
-     if freeVar i x then do
-       xdoc <- displayLF x
-       fail $ unlines ["Cannot strengthen; variable occurs free"
-                      , unwords [show d, show v, show i]
-                      , xdoc
-                      ]
-     else
-       runChangeT $ weaken i (-1) x
-   else
-     fail "Strengthening an escaped variable"
--}
+data GoalView f m γ
+ = VGoal (f γ TERM) (f γ CON)
+ | VSigma (forall x.
+           (forall   γ'. (WFContext γ', ?nms :: Set String, ?hyps :: Hyps f (γ'::>()))
+                      => Weakening γ' γ
+                      -> String
+                      -> Var (γ'::>())
+                      -> f γ' TYPE
+                      -> f (γ'::>()) GOAL
+                      -> x)
+           -> x)
 
-class (Ord (LFTypeConst f), Ord (LFConst f),
-       Pretty (LFTypeConst f), Pretty (LFConst f),
+
+goalViewLF :: forall f m γ γ'
+            . (WFContext γ', LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ')
+           => Weakening γ' γ
+           -> f γ' GOAL
+           -> GoalView f m γ
+goalViewLF w g =
+  case unfoldLF g of
+    Weak x -> weakenCtx $ goalViewLF (WeakL w) x
+    Goal m c -> VGoal (weakening w m) (weakening w c)
+    Sigma nm a g -> VSigma $ \cont ->
+       extendCtx nm QSigma a $ cont w nm (B ()) a g
+
+data Weakening γ γ' where
+  WeakRefl  :: Weakening γ γ
+  WeakR     :: Weakening γ γ' -> Weakening γ (γ'::>b)
+  WeakL     :: Weakening (γ::>b) γ' -> Weakening γ γ'
+  WeakTrans :: Weakening γ₁ γ₂ ->
+               Weakening γ₂ γ₃ ->
+               Weakening γ₁ γ₃
+
+weakSubst :: Weakening γ₁ γ₂
+          -> Subst m f γ₂ γ₃
+          -> Subst m f γ₁ γ₃
+weakSubst WeakRefl = id
+weakSubst (WeakR w) = weakSubst w . SubstWeak
+weakSubst (WeakL w) = SubstWeak . weakSubst w
+weakSubst (WeakTrans w₁ w₂) = weakSubst w₁ . weakSubst w₂
+
+weakening :: LFModel f m
+          => Weakening γ γ'
+          -> f γ s
+          -> f γ' s
+weakening WeakRefl  = id
+weakening (WeakR w) = weaken . weakening w
+weakening (WeakL w) = weakening w . weaken
+weakening (WeakTrans w₁ w₂) = weakening w₂ . weakening w₁ 
+
+
+
+strengthen :: LFModel f m
+           => f (γ::>b) s
+           -> m (f γ s)
+strengthen =
+   hsubst (SubstApply
+             SubstRefl
+             (\_ -> fail "Cannot strengthen; variable occurs free"))
+
+
+inEmptyCtx :: ((?nms :: Set String, ?hyps :: Hyps f E) => a)
+           -> a
+inEmptyCtx f =
+  let ?nms = Set.empty in
+  let ?hyps = HNil in
+  f
+
+weakenCtx :: (?hyps :: Hyps f (γ ::> b))
+          => ((?hyps :: Hyps f γ) => a)
+          -> a
+weakenCtx f =
+  let ?hyps = weakenHyps ?hyps in
+  f
+
+extendCtx :: (?nms :: Set String, ?hyps :: Hyps f γ)
+          => String
+          -> Quant
+          -> f γ TYPE
+          -> ((?nms :: Set String, ?hyps :: Hyps f (γ::>())) => x)
+          -> x
+extendCtx nm q a f = 
+  let nm' = freshName nm in
+  let ?nms = Set.insert nm ?nms in
+  let ?hyps = extendHyps ?hyps nm' q a in
+  f
+
+class (Ord (LFTypeConst f), Ord (LFConst f), Ord (LFUVar f),
+       Pretty (LFTypeConst f), Pretty (LFConst f), Pretty (LFUVar f),
        Monad m)
   => LFModel (f :: Ctx * -> SORT -> *) m | f -> m, m -> f where
   unfoldLF :: f γ s -> LF f γ s
@@ -235,11 +293,14 @@ class (Ord (LFTypeConst f), Ord (LFConst f),
   inferKind    :: (WFContext γ, ?nms::Set String, ?hyps::Hyps f γ) => f γ ATYPE -> m (f γ KIND)
   inferType    :: (WFContext γ, ?nms::Set String, ?hyps::Hyps f γ) => f γ TERM  -> m (f γ TYPE)
   inferAType   :: (WFContext γ, ?nms::Set String, ?hyps::Hyps f γ) => f γ ATERM -> m (f γ TYPE)
+  validateGoal :: (WFContext γ, ?nms::Set String, ?hyps::Hyps f γ) => f γ GOAL  -> m ()
+  validateCon  :: (WFContext γ, ?nms::Set String, ?hyps::Hyps f γ) => f γ CON   -> m ()
   alphaEq      :: WFContext γ => f γ s -> f γ s -> m Bool
   freeVar      :: WFContext γ => Var γ -> f γ s -> Bool
 
   constKind :: LFTypeConst f -> m (f E KIND)
   constType :: LFConst f -> m (f E TYPE)
+  uvarType  :: LFUVar f -> m (f E TYPE)
 
   kindView :: (WFContext γ, ?nms :: Set String, ?hyps :: Hyps f γ)
            => f γ KIND
@@ -252,6 +313,10 @@ class (Ord (LFTypeConst f), Ord (LFConst f),
   termView :: (WFContext γ, ?nms :: Set String, ?hyps :: Hyps f γ)
            => f γ TERM
            -> TermView f m γ
+
+  goalView :: (WFContext γ, ?nms :: Set String, ?hyps :: Hyps f γ)
+           => f γ GOAL
+           -> GoalView f m γ
 
 {-
   underLambda :: f γ TERM
@@ -403,6 +468,12 @@ mkLam nm a m = do
   m' <- m
   foldLF (Lam nm a' m')
 
+mkSigma :: LFModel f m => String -> m (f γ TYPE) -> m (f (γ::>()) GOAL) -> m (f γ GOAL)
+mkSigma nm a g = do
+  a' <- a
+  g' <- g
+  foldLF (Sigma nm a' g')
+
 tmConst :: (WFContext γ, LFModel f m) => LFConst f -> m (f γ TERM)
 tmConst x = liftClosed <$> (foldLF . ATerm =<< foldLF (Const x))
 
@@ -417,7 +488,7 @@ app x y = join (go1 <$> x <*> y)
   go1 x' y' =
    case (unfoldLF x', unfoldLF y') of
      (Weak x'', Weak y'') -> weaken <$> go1 x'' y''
-     _ -> go2 x' y' id SubstEnd
+     _ -> go2 x' y' id SubstRefl
 
   go2 :: forall γ γ'. WFContext γ'
                    => f γ TERM
@@ -463,16 +534,22 @@ sigma nm tp f = do
 
 cTrue :: LFModel f m
       => m (f γ CON)
-cTrue = conj []
+cTrue = foldLF (And [])
 
 conj :: forall f m γ
-      . LFModel f m
+      . (WFContext γ, LFModel f m)
      => [m (f γ CON)]
      -> m (f γ CON)
-conj cs = foldLF . And . concat =<< mapM (f =<<) cs
- where f :: f γ CON -> m [f γ CON]
-       f (unfoldLF -> (And xs)) = concat <$> mapM f xs
-       f x = (:[]) <$> (return x)
+conj cs = do
+   x <- fmap concat . sequence <$> (mapM f =<< sequence cs)
+   case x of
+     Nothing -> liftClosed <$> foldLF Fail
+     Just xs -> foldLF (And xs)
+ where f :: forall γ. f γ CON -> m (Maybe [f γ CON])
+       f (unfoldLF -> And xs) = (fmap concat . sequence) <$> mapM f xs
+       f (unfoldLF -> Weak x) = fmap (map weaken) <$> f x
+       f (unfoldLF -> Fail)   = return Nothing
+       f x = return (Just [x])
 
 goal :: LFModel f m
      => m (f γ TERM)
@@ -486,49 +563,168 @@ unify :: forall f m γ
       => m (f γ TERM)
       -> m (f γ TERM)
       -> m (f γ CON)
-unify x y = join (go SubstEnd id SubstEnd id <$> x <*> y)
- where
-  go :: forall γ₁ γ₂ γ
+unify x y = join (unifyTm SubstRefl SubstRefl <$> x <*> y)
+
+
+unifyTm :: forall f m γ₁ γ₂ γ
       . (WFContext γ, LFModel f m)
      => (Subst m f γ₁ γ)
-     -> (Var γ₁ -> Var γ)
      -> (Subst m f γ₂ γ)
-     -> (Var γ₂ -> Var γ)
      -> f γ₁ TERM
      -> f γ₂ TERM
      -> m (f γ CON)
-  go s₁ wv₁ s₂ wv₂ x y =
+unifyTm s₁ s₂ x y =
    case (unfoldLF x, unfoldLF y) of
-     (Weak x', _) -> go (SubstWeak s₁) (wv₁ . F) s₂ wv₂ x' y
-     (_, Weak y') -> go s₁ wv₁ (SubstWeak s₂) (wv₂ . F) x y'
+     (Weak x', _) -> unifyTm (SubstWeak s₁) s₂ x' y
+     (_, Weak y') -> unifyTm s₁ (SubstWeak s₂) x y'
      (ATerm r1, ATerm r2) -> do
-         q <- alphaEqLF wv₁ wv₂ r1 r2
-         if q then
-           cTrue
-         else
-           foldLF =<< Unify <$> hsubst s₁ r1 <*> hsubst s₂ r2
+         res <- unifyATm s₁ s₂ r1 r2
+         case res of
+           UnifyFail ->
+             liftClosed <$> foldLF Fail
+           UnifyDefault -> 
+             foldLF =<< Unify <$> hsubst s₁ r1 <*> hsubst s₂ r2
+           UnifyDecompose cs ->
+             foldLF (And cs)
      (Lam nm a1 m1, Lam _ a2 m2) -> do
-        q <- alphaEqLF wv₁ wv₂ a1 a2
-        unless q (fail "Attempting to unify LF terms with unequal types")
-        c <- go (SubstSkip s₁) (mapF wv₁) (SubstSkip s₂) (mapF wv₂) m1 m2
-        foldLF =<< Forall nm <$> hsubst s₁ a1 <*> return c
+        cty <- unifyTy s₁ s₂ a1 a2
+        c <- unifyTm (SubstSkip s₁) (SubstSkip s₂) m1 m2
+        c' <- foldLF =<< Forall nm <$> hsubst s₁ a1 <*> return c
+        conj [return cty, return c']
      _ -> fail "Attempting to unify LF terms with unequal types"
 
+unifyTy :: forall f m γ₁ γ₂ γ
+      . (WFContext γ, LFModel f m)
+     => (Subst m f γ₁ γ)
+     -> (Subst m f γ₂ γ)
+     -> f γ₁ TYPE
+     -> f γ₂ TYPE
+     -> m (f γ CON)
+unifyTy s₁ s₂ x y =
+  case (unfoldLF x, unfoldLF y) of
+    (Weak x', _) -> unifyTy (SubstWeak s₁) s₂ x' y
+    (_, Weak y') -> unifyTy s₁ (SubstWeak s₂) x y'
+    (TyPi nm a1 a2, TyPi _ a1' a2') -> do
+      conj [ unifyTy s₁ s₂ a1 a1'
+           , do c <- unifyTy (SubstSkip s₁) (SubstSkip s₂) a2 a2'
+                a1' <- hsubst s₁ a1
+                foldLF (Forall nm a1' c)
+           ]
+    (AType p1, AType p2) -> unifyATy s₁ s₂ p1 p2
+    _ -> fail "Attempting to unify LF types of different kinds"
 
+unifyATy :: forall f m γ₁ γ₂ γ
+      . (WFContext γ, LFModel f m)
+     => (Subst m f γ₁ γ)
+     -> (Subst m f γ₂ γ)
+     -> f γ₁ ATYPE
+     -> f γ₂ ATYPE
+     -> m (f γ CON)
+unifyATy s₁ s₂ x y =
+  case (unfoldLF x, unfoldLF y) of
+    (Weak x', _) -> unifyATy (SubstWeak s₁) s₂ x' y
+    (_, Weak y') -> unifyATy s₁ (SubstWeak s₂) x y'
+    (TyConst c1, TyConst c2) 
+      | c1 == c2  -> foldLF (And [])
+    (TyApp p1 m1, TyApp p2 m2) -> do
+      conj [ unifyATy s₁ s₂ p1 p2
+           , unifyTm  s₁ s₂ m1 m2
+           ]
+    _ -> liftClosed <$> foldLF Fail
+
+cAnd' :: LFModel f m
+      => f γ CON
+      -> [f γ CON]
+      -> UnifyResult f γ
+cAnd' c cs =
+  case unfoldLF c of
+    Fail -> UnifyFail
+    And xs -> UnifyDecompose (xs ++ cs)
+    _      -> UnifyDecompose (c : cs)
+
+data UnifyResult f γ
+  = UnifyDefault
+  | UnifyDecompose [f γ CON]
+  | UnifyFail
+
+unifyATm :: forall f m γ₁ γ₂ γ
+      . (WFContext γ, LFModel f m)
+     => (Subst m f γ₁ γ)
+     -> (Subst m f γ₂ γ)
+     -> f γ₁ ATERM
+     -> f γ₂ ATERM
+     -> m (UnifyResult f γ)
+unifyATm s₁ s₂ x y =
+  case (unfoldLF x, unfoldLF y) of
+    (Weak x', _) -> unifyATm (SubstWeak s₁) s₂ x' y
+    (_, Weak y') -> unifyATm s₁ (SubstWeak s₂) x y'
+    (Const c₁, Const c₂)
+       | c₁ == c₂  -> return $ UnifyDecompose []
+       | otherwise -> return $ UnifyFail
+    (App r₁ m₁, App r₂ m₂) -> do
+       res <- unifyATm s₁ s₂ r₁ r₂
+       case res of
+         UnifyDefault      -> return UnifyDefault
+         UnifyFail         -> return UnifyFail
+         UnifyDecompose xs -> do
+             cm <- unifyTm s₁ s₂ m₁ m₂
+             return $ cAnd' cm xs
+    _ -> return UnifyDefault
+
+
+underGoal :: forall f m γ
+           . (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ, WFContext γ)
+          => f γ GOAL
+          -> (forall γ'
+              . (?nms :: Set String, ?hyps :: Hyps f γ', WFContext γ')
+             => (forall s. f γ s -> f γ' s)
+             -> f γ' TERM
+             -> f γ' CON
+             -> m (f γ' GOAL))
+          -> m (f γ GOAL)
+underGoal g0 cont = go id SubstRefl g0
+ where
+   go :: forall γ₁ γ₂
+       . (?nms :: Set String, ?hyps :: Hyps f γ₂, WFContext γ₂)
+      => (forall s. f γ s -> f γ₂ s)
+      -> Subst m f γ₁ γ₂
+      -> f γ₁ GOAL
+      -> m (f γ₂ GOAL)
+   go w sub g =
+     case unfoldLF g of
+       Weak x -> go w (SubstWeak sub) x
+       Goal m c -> join (cont w <$> hsubst sub m <*> hsubst sub c)
+       Sigma nm a g' -> do
+         a'  <- hsubst sub a
+         g'' <- extendCtx nm QSigma a' $
+                    go (weaken . w) (SubstSkip sub) g'
+         foldLF (Sigma nm a' g'')
+
+
+underGoal' :: forall f m γ
+           . (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ, WFContext γ)
+          => f γ GOAL
+          -> (forall γ'
+              . (?nms :: Set String, ?hyps :: Hyps f γ', WFContext γ')
+             => f γ' TERM
+             -> f γ' CON
+             -> m (f γ' GOAL))
+          -> m (f γ GOAL)
+underGoal' g0 cont = go g0
+ where
+   go :: forall γ'
+       . (?nms :: Set String, ?hyps :: Hyps f γ', WFContext γ')
+      => f γ' GOAL
+      -> m (f γ' GOAL)
+   go g =
+     case unfoldLF g of
+       Weak x -> weaken <$> (weakenCtx $ go x)
+       Goal m c -> cont m c
+       Sigma nm a g' -> do
+         g'' <- extendCtx nm QSigma a $ go g'
+         foldLF (Sigma nm a g'')
 
 {-
-underGoal :: LFModel f a c m
-          => f GOAL
-          -> (f TERM -> f CON -> m (f GOAL))
-          -> m (f GOAL)
-underGoal g cont =
-  case unfoldLF g of
-    Sigma nm a g' -> do
-      nm' <- freshName nm
-      g'' <- extendContext nm' QSigma a $ underGoal g' cont
-      foldLF (Sigma nm a g'')
-    Goal m c -> cont m c
-
 solve :: LFModel f a c m
       => f GOAL
       -> m (f TERM)
@@ -580,6 +776,7 @@ alphaEqLF w₁ w₂ x y =
     (ATerm x     , ATerm x')       -> alphaEqLF w₁ w₂ x x'
     (Lam _ a m   , Lam _ a' m')    -> (&&) <$> alphaEqLF w₁ w₂ a a' <*> alphaEqLF (mapF w₁) (mapF w₂) m m'
     (Var v       , Var v')         -> return $ w₁ (B v) == w₂ (B v')
+    (UVar u      , UVar u')        -> return $ u == u'
     (Const x     , Const x')       -> return $ x == x'
     (App r m     , App r' m')      -> (&&) <$> alphaEqLF w₁ w₂ r r' <*> alphaEqLF w₁ w₂ m m'
     (Unify r1 r2 , Unify r1' r2')  -> (&&) <$> alphaEqLF w₁ w₂ r1 r1' <*> alphaEqLF w₁ w₂ r2 r2'
@@ -596,16 +793,14 @@ validateKindLF :: forall f m γ
                -> m ()
 validateKindLF tm =
   case unfoldLF tm of
-    Weak x -> let ?hyps = weakenHyps ?hyps
-               in validateKind x
+    Weak x -> weakenCtx $ validateKind x
     Type -> return ()
     KPi nm a k -> do
       validateType a
-      let (nm',nms') = freshName nm ?nms
-      let ?nms = nms'
-      let ?hyps = extendHyps ?hyps nm' QPi a
-      validateKind k
+      extendCtx nm QPi a $ do
+        validateKind k
       {- subordination check -}
+
 
 validateTypeLF :: forall f m γ
                 . (WFContext γ, LFModel f m, ?nms::Set String, ?hyps:: Hyps f γ)
@@ -613,15 +808,10 @@ validateTypeLF :: forall f m γ
                -> m ()
 validateTypeLF tm =
   case unfoldLF tm of
-    Weak x -> let ?hyps = weakenHyps ?hyps
-               in validateType x
+    Weak x -> weakenCtx $ validateType x
     TyPi nm a1 a2 -> do
       validateType a1
-      let (nm',nms') = freshName nm ?nms
-      let ?nms = nms'
-      let ?hyps = extendHyps ?hyps nm' QPi a1
-      validateType a2
-
+      extendCtx nm QPi a1 $ validateType a2
     AType p ->
       checkK =<< inferKind p
 
@@ -639,12 +829,11 @@ inferKindLF :: forall f m γ
             -> m (f γ KIND)
 inferKindLF tm =
   case unfoldLF tm of
-    Weak x -> let ?hyps = weakenHyps ?hyps
-               in weaken <$> inferKind x
+    Weak x -> weakenCtx (weaken <$> inferKind x)
     TyConst x -> constKind x
     TyApp p1 m2 -> do
       k <- inferKind p1
-      subK ?hyps SubstEnd id k m2
+      subK ?hyps SubstRefl id k m2
 
  where
   subK :: forall γ'. WFContext γ'
@@ -692,19 +881,15 @@ inferTypeLF :: forall f m γ
             -> m (f γ TYPE)
 inferTypeLF m =
   case unfoldLF m of
-    Weak x -> let ?hyps = weakenHyps ?hyps
-               in weaken <$> inferType x
+    Weak x -> weakenCtx (weaken <$> inferType x)
     ATerm r -> do
       a <- inferAType r
       checkTp ?hyps a
       return a
-
     Lam nm a2 m -> do
-      let (nm',nms') = freshName nm ?nms
-      let ?nms = nms'
-      let ?hyps = extendHyps ?hyps nm' QLam a2
-      a1 <- inferType m
-      foldLF (TyPi nm a2 a1)
+      extendCtx nm QLam a2 $ do
+        a1 <- inferType m
+        foldLF (TyPi nm a2 a1)
 
  where
   checkTp :: forall γ'. WFContext γ' => Hyps f γ' -> f γ' TYPE -> m ()
@@ -726,15 +911,15 @@ inferATypeLF :: forall m f γ
              -> m (f γ TYPE)
 inferATypeLF r =
   case unfoldLF r of
-    Weak x -> let ?hyps = weakenHyps ?hyps
-               in weaken <$> inferAType x
+    Weak x -> weakenCtx (weaken <$> inferAType x)
     Var b -> do
       let (_,_,a) = lookupVar ?hyps (B b)
       return a
+    UVar u -> uvarType u
     Const c -> constType c
     App r1 m2 -> do
       a <- inferAType r1
-      checkArg m2 id SubstEnd a
+      checkArg m2 id SubstRefl a
 
  where
   checkArg :: forall γ'. WFContext γ'
@@ -754,8 +939,46 @@ inferATypeLF r =
           adoc <- displayLF (w a)
           fail $ unwords ["Expected function type", adoc]
 
+
+validateGoalLF :: forall f m γ
+                . (WFContext γ, LFModel f m, ?nms::Set String, ?hyps:: Hyps f γ)
+               => f γ GOAL
+               -> m ()
+validateGoalLF g =
+  case unfoldLF g of
+    Weak x -> weakenCtx $ validateGoal x
+    Sigma nm a g' -> do
+      validateType a
+      extendCtx nm QSigma a $ validateGoal g'
+    Goal m c -> do
+      _ <- inferType m
+      validateCon c
+
+
+validateConLF :: forall f m γ
+                . (WFContext γ, LFModel f m, ?nms::Set String, ?hyps:: Hyps f γ)
+               => f γ CON
+               -> m ()
+validateConLF c =
+  case unfoldLF c of
+    Weak x -> weakenCtx $ validateCon x
+    Fail -> return ()
+    Unify r1 r2 -> do
+      _ <- inferAType r1
+      _ <- inferAType r2
+      return ()
+    Forall nm a c' -> do
+      validateType a
+      extendCtx nm QForall a $ validateCon c'
+    Exists nm a c' -> do
+      validateType a
+      extendCtx nm QExists a $ validateCon c'
+    And cs ->
+      mapM_ validateCon cs
+
+
 data Subst m f :: Ctx * -> Ctx * -> * where
-  SubstEnd   :: Subst m f γ γ
+  SubstRefl  :: Subst m f γ γ
   SubstApply :: Subst m f γ γ' -> (b -> m (f γ' TERM)) -> Subst m f (γ ::> b) γ'
   SubstWeak  :: Subst m f (γ ::> b) γ' -> Subst m f γ γ'
   SubstSkip  :: Subst m f γ γ' -> Subst m f (γ ::> b) (γ' ::> b)
@@ -765,20 +988,20 @@ hsubstLF :: forall f m s γ γ'
          => Subst m f γ γ'
          -> f γ s
          -> m (f γ' s)
-hsubstLF SubstEnd tm = return tm
+hsubstLF SubstRefl tm = return tm
 hsubstLF (SubstWeak s) tm = hsubst s (weaken tm)
 hsubstLF sub tm =
   case unfoldLF tm of
      Weak x ->
        case sub of
-         SubstEnd       -> return tm
+         SubstRefl      -> return tm
          SubstWeak s    -> hsubst s (weaken tm)
          SubstSkip s    -> weaken <$> hsubst s x
          SubstApply s _ -> hsubst s x
 
      Type ->
         case sub of
-          SubstEnd    -> return tm
+          SubstRefl   -> return tm
           SubstWeak s -> hsubst s (weaken tm)
           _ -> error "impossible"
 
@@ -789,7 +1012,7 @@ hsubstLF sub tm =
 
      TyConst _ ->
         case sub of
-          SubstEnd -> return tm
+          SubstRefl   -> return tm
           SubstWeak s -> hsubst s (weaken tm)
           _ -> error "impossible"
 
@@ -809,11 +1032,21 @@ hsubstLF sub tm =
 
      Sigma nm a g  -> foldLF =<< (Sigma nm <$> hsubst sub a <*> hsubst sub' g)
      Goal m c      -> foldLF =<< (Goal <$> hsubst sub m <*> hsubst sub c)
+     Fail ->
+        case sub of
+          SubstRefl   -> return tm
+          SubstWeak s -> hsubst s (weaken tm)
+          _ -> error "impossible"
 
      ATerm x      -> either return (foldLF . ATerm) =<< hsubstTm sub x
      Const _      -> f =<< hsubstTm sub tm
      Var _        -> f =<< hsubstTm sub tm
      App _ _      -> f =<< hsubstTm sub tm
+     UVar _ ->
+        case sub of
+          SubstRefl   -> return tm
+          SubstWeak s -> hsubst s (weaken tm)
+          _ -> error "impossible"
 
  where
   sub' :: forall b. Subst m f (γ ::> b) (γ' ::> b)
@@ -831,13 +1064,13 @@ hsubstTm :: forall m f γ γ'
          => Subst m f γ γ'
          -> f γ ATERM
          -> m (Either (f γ' TERM) (f γ' ATERM))
-hsubstTm SubstEnd tm = return (Right tm)
+hsubstTm SubstRefl tm = return (Right tm)
 hsubstTm (SubstWeak s) tm = hsubstTm s (weaken tm)
 hsubstTm sub tm =
          case unfoldLF tm of
            Weak x ->
              case sub of
-               SubstEnd       -> return (Right tm)
+               SubstRefl      -> return (Right tm)
                SubstWeak s    -> hsubstTm s (weaken tm)
                SubstApply s _ -> hsubstTm s x
                SubstSkip s -> do
@@ -846,14 +1079,20 @@ hsubstTm sub tm =
 
            Var v ->
              case sub of
-               SubstEnd       -> return $ Right tm
+               SubstRefl      -> return $ Right tm
                SubstWeak s    -> hsubstTm s (weaken tm)
                SubstApply _ f -> Left <$> f v
                SubstSkip _    -> Right <$> foldLF (Var v)
 
+           UVar _ ->
+             case sub of
+               SubstRefl   -> return $ Right tm
+               SubstWeak s -> hsubstTm s (weaken tm)
+               _ -> error "impossible"
+
            Const _ ->
              case sub of
-               SubstEnd -> return $ Right tm
+               SubstRefl   -> return $ Right tm
                SubstWeak s -> hsubstTm s (weaken tm)
                _ -> error "impossible"
 
@@ -871,7 +1110,7 @@ hsubstTm sub tm =
   gosub1 x y =
    case (unfoldLF x, unfoldLF y) of
      (Weak x', Weak y') -> weaken <$> gosub1 x' y'
-     _ -> gosub2 x y SubstEnd
+     _ -> gosub2 x y SubstRefl
 
   gosub2 :: forall γ γ'. f γ TERM
                       -> f γ' TERM
@@ -923,14 +1162,12 @@ getName ss nm = tryName ss (nm : [ nm++show i | i <- [0..] ])
     | otherwise = x
   tryName _ [] = undefined
 
-freshName :: String
-          -> Set String
-          -> (String, Set String)
-freshName nm nms =
-  let nm' = getName nms nm
-   in (nm' , Set.insert nm' nms)
+freshName :: (?nms :: Set String)
+          => String
+          -> String
+freshName nm = getName ?nms nm
 
-extendHyps :: Hyps f γ -> String -> Quant -> f γ TYPE -> Hyps f (γ ::> ())
+extendHyps :: Hyps f γ -> String -> Quant -> f γ TYPE -> Hyps f (γ ::> b)
 extendHyps h nm q a = HCons h q (\_ -> (nm,a))
 
 prettyLF
@@ -940,16 +1177,13 @@ prettyLF
       -> m Doc
 prettyLF prec x =
   case unfoldLF x of
-    Weak x -> let ?hyps = weakenHyps ?hyps
-               in prettyLF prec x
+    Weak x -> weakenCtx (prettyLF prec x)
     Type -> return $ text "Type"
     KPi nm a k
       | freeVar (B ()) k -> do
-         let (nm',nms') = freshName nm ?nms
+         let nm' = freshName nm
          adoc <- ppLF BinderPrec a
-         let ?nms = nms'
-         let ?hyps = extendHyps ?hyps nm' QPi a
-         kdoc <- ppLF TopPrec k
+         kdoc <- extendCtx nm QPi a $ ppLF TopPrec k
          return $ (if prec /= TopPrec then parens else id) $
            text "Π" <> text nm' <+> colon <+> adoc <+> comma <> nest 2 (softline <> kdoc)
       | otherwise -> do
@@ -961,11 +1195,9 @@ prettyLF prec x =
     AType x -> group . (linebreak <>) . hang 2 <$> (ppLF prec x)
     TyPi nm a1 a2
       | freeVar (B ()) a2 -> do
-         let (nm',nms') = freshName nm ?nms
+         let nm' = freshName nm
          a1doc <- ppLF BinderPrec a1
-         let ?nms = nms'
-         let ?hyps = extendHyps ?hyps nm' QPi a1
-         a2doc <- ppLF TopPrec a2
+         a2doc <- extendCtx nm QPi a1 $ ppLF TopPrec a2
          return $ (if prec /= TopPrec then parens else id) $
            text "Π" <> text nm' <+> colon <+> a1doc <> comma <> nest 2 (softline <> a2doc)
       | otherwise -> do
@@ -985,11 +1217,9 @@ prettyLF prec x =
            group . (linebreak <>) . hang 2 <$> (ppLF prec x)
       | otherwise -> hang 2 <$> ppLF prec x
     Lam nm a m -> do
-         let (nm',nms') = freshName nm ?nms
+         let nm' = freshName nm
          adoc <- ppLF BinderPrec a
-         let ?nms = nms'
-         let ?hyps = extendHyps ?hyps nm' QLam a
-         mdoc <- ppLF TopPrec m
+         mdoc <- extendCtx nm QLam a $ ppLF TopPrec m
          return $! (if prec /= TopPrec then parens else id) $
            text "λ" <> text nm' <+> colon <+> adoc <> comma <> nest 2 (softline <> mdoc)
     Const x -> return $ pretty x
@@ -1002,6 +1232,8 @@ prettyLF prec x =
       let (nm,_,_) = lookupVar ?hyps (B v)
        in return $ text nm
 
+    UVar u -> return $ pretty u
+
     Unify r1 r2 -> do
          r1doc <- ppLF TopPrec r1
          r2doc <- ppLF TopPrec r2
@@ -1013,31 +1245,28 @@ prettyLF prec x =
          return $ align $ cat $ punctuate (text " ∧ ") cs'
 
     Forall nm a c -> do
-         let (nm',nms') = freshName nm ?nms
+         let nm' = freshName nm
          adoc <- ppLF BinderPrec a
-         let ?nms = nms'
-         let ?hyps = extendHyps ?hyps nm' QForall a
-         cdoc <- ppLF TopPrec c
+         cdoc <- extendCtx nm QForall a $ ppLF TopPrec c
          return $ (if prec /= TopPrec then parens else id) $
            text "∀" <> text nm' <+> colon <+> adoc <> comma <> nest 2 (softline <> cdoc)
 
     Exists nm a c -> do
-         let (nm',nms') = freshName nm ?nms
+         let nm' = freshName nm
          adoc <- ppLF BinderPrec a
-         let ?nms = nms'
-         let ?hyps = extendHyps ?hyps nm' QExists a
-         cdoc <- ppLF TopPrec c
+         cdoc <- extendCtx nm QExists a $ ppLF TopPrec c
          return $ (if prec /= TopPrec then parens else id) $
            text "∃" <> text nm' <+> colon <+> adoc <> comma <> nest 2 (softline <> cdoc)
 
     Sigma nm a g -> do
-         let (nm',nms') = freshName nm ?nms
+         let nm' = freshName nm
          adoc <- ppLF BinderPrec a
-         let ?nms = nms'
-         let ?hyps = extendHyps ?hyps nm' QSigma a
-         gdoc <- ppLF TopPrec g
+         gdoc <- extendCtx nm QSigma a $ ppLF TopPrec g
          return $ (if prec /= TopPrec then parens else id) $
            text "Σ" <> text nm' <+> colon <+> adoc <> comma <> nest 2 (softline <> gdoc)
+
+    Fail -> do
+         return $ text "⊥"
 
     Goal m c -> do
          mdoc <- ppLF TopPrec m
@@ -1125,3 +1354,5 @@ foldFree merge z = go
       Exists _ a c -> go f a `merge` go f' c
       Sigma _ a g -> go f a `merge` go f' g
       Goal m c -> go f m `merge` go f c
+      Fail -> z
+      UVar _ -> z

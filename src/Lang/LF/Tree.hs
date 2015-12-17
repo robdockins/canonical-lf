@@ -44,6 +44,7 @@ newtype LFTree a c γ (s::SORT) =
 
 type instance LFTypeConst (LFTree a c) = a
 type instance LFConst (LFTree a c) = c
+type instance LFUVar (LFTree a c) = Integer
 
 type M a c = ReaderT (Signature a c) (Except String)
 
@@ -59,7 +60,12 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
   inferKind = inferKindLF
   inferType = inferTypeLF
   inferAType = inferATypeLF
+  validateGoal = validateGoalLF
+  validateCon = validateConLF
+
   alphaEq = alphaEqLF id id
+
+  uvarType _ = fail "UVars not implemented"
 
   constKind a = do
      sig <- ask
@@ -76,7 +82,8 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
 
   kindView = kindViewLF id
   typeView = typeViewLF id
-  termView = termViewLF id id
+  termView = termViewLF WeakRefl id
+  goalView = goalViewLF WeakRefl
 {-
 
   typeView = typeViewLF

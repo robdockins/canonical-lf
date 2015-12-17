@@ -7,7 +7,7 @@ import Prelude hiding (pi, abs)
 --import           Data.Sequence (Seq, (|>))
 --import qualified Data.Sequence as Seq
 import           Data.Set (Set)
-import qualified Data.Set as Set
+--import qualified Data.Set as Set
 --import           Data.Map (Map)
 --import qualified Data.Map as Map
 import           System.IO
@@ -67,7 +67,7 @@ sig = buildSignature
            (pi "x" tm $ \x ->
               typeof (var x) (var t2) ==> typeof (var f @@ var x) (var t))
            ==>
-           typeof (lam (λ"x" tm (\x -> var f @@ var x))) (arrow (var t2) (var t))
+           typeof (lam "x" (\x -> var f @@ var x)) (arrow (var t2) (var t))
   , "of_nat_elim" :.
          pi "t" tp $ \t ->
          pi "z" tm $ \z ->
@@ -89,7 +89,7 @@ sig = buildSignature
            is_value (var n) ==> is_value (suc (var n))
   , "value_lam" :.
          pi "f" (tm ==> tm) $ \f ->
-           is_value (lam (λ "x" tm (\x -> var f @@ var x)))
+           is_value (lam "x" (\x -> var f @@ var x))
 
     -- STLC small-step CBV semantics
   , "step" ::. tm ==> tm ==> lf_type
@@ -110,7 +110,7 @@ sig = buildSignature
          pi "e₂" tm $ \e2 ->
          pi "f" (tm ==> tm) $ \f ->
             is_value (var e2) ==>
-            step (app (lam (λ "x" tm (\x -> var f @@ var x))) (var e2)) (var f @@ var e2)
+            step (app (lam "x" (\x -> var f @@ var x)) (var e2)) (var f @@ var e2)
   , "step_nat_zero" :.
          pi "z" tm $ \z ->
          pi "s" tm $ \s ->
@@ -153,8 +153,11 @@ infixl 5 `app`
 app :: WFContext γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM)
 app x y = tmConst "app" @@ x @@ y
 
-lam :: WFContext γ => M (LF γ TERM) -> M (LF γ TERM)
-lam f = tmConst "lam" @@ f
+lam :: WFContext γ
+    => String
+    -> (forall b. IsBoundVar b => Var (γ::>b) -> M (LF (γ::>b) TERM))
+    -> M (LF γ TERM)
+lam nm f = tmConst "lam" @@ (λ nm tm f)
 
 nat_elim :: WFContext γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM)
 nat_elim z s n = tmConst "nat_elim" @@ z @@ s @@ n
@@ -185,14 +188,14 @@ typing = mkTerm sig $
 typing2 :: LF E TERM
 typing2 = mkTerm sig $
   tmConst "of_lam" @@ nat @@ (arrow nat nat) @@
-      (λ"x" tm (\x -> lam (λ"y" tm $ \y -> nat_elim (var x) (lam (λ"n" tm (\n -> suc (var n)))) (var y)))) @@
+      (λ"x" tm (\x -> lam "y" $ \y -> nat_elim (var x) (lam "n" (\n -> suc (var n))) (var y))) @@
       (λ"x" tm $ \x ->
         λ"prf_x" (typeof (var x) nat) $ \prf_x ->
           tmConst "of_lam" @@ nat @@ nat @@
-            (λ"y" tm $ \y -> nat_elim (var x) (lam (λ"n" tm (\n -> suc (var n)))) (var y)) @@
+            (λ"y" tm $ \y -> nat_elim (var x) (lam "n" (\n -> suc (var n))) (var y)) @@
             (λ"y" tm $ \y ->
               λ"prf_y" (typeof (var y) nat) $ \prf_y ->
-                tmConst "of_nat_elim" @@ nat @@ (var x) @@ (lam (λ"n" tm (\n -> suc (var n)))) @@ var y @@
+                tmConst "of_nat_elim" @@ nat @@ (var x) @@ (lam "n" (\n -> suc (var n))) @@ var y @@
                   var prf_x @@
                   (tmConst "of_lam" @@ nat @@ nat @@ (λ"n" tm (\n -> suc (var n))) @@
                     (λ"n" tm $ \n -> λ"prf_n" (typeof (var n) nat) $ \prf_n -> of_suc (var n) (var prf_n))) @@
@@ -213,76 +216,69 @@ pattern SucP n <-
 pattern ArrowP t1 t2 <-
   (termView -> VConst "arrow" [t1,t2])
 
-{-
-typecheck, typecheck' :: Map (LFVar LF) (M (LF TERM)) -> LF TERM -> M (LF GOAL)
+typecheck :: forall γ γ'
+           . (?nms :: Set String, ?hyps :: H γ, ?hyps' :: H γ',  WFContext γ', WFContext γ)
+          => Subst M LF γ γ'
+          -> LF γ TERM
+          -> M (LF γ' GOAL)
+          
+typecheck sub (termView -> VVar v []) =
+   goal (hsubst sub =<< var v) cTrue
 
-typecheck γ x = do
-  ctx <- dumpContext
-  tm  <- ppLF TopPrec x
-  g <- Debug.trace (unlines ["Typechecking:"
-                       , show ctx
-                       , "----------"
-                       , show tm
-                       ]) $ typecheck' γ x
-  gdoc <- ppLF TopPrec g
-  Debug.trace (unlines ["Typecheck goal:"
-                       , show ctx
-                       , "----------"
-                       , show gdoc
-                       ]) $ return g
+typecheck _ ZeroP = goal nat cTrue
 
-typecheck' γ (termView -> VVar m) = m $ \v [] -> do
-  Debug.trace ("lookup of var: " ++ show v) $ do
-   case Map.lookup v γ of
-     Just tm -> goal tm cTrue
-     Nothing -> do
-        nm <- lookupVariableName v
-        dctx <- dumpContext
-        fail $ unlines [ unwords ["Type variable not bound!", nm]
-                       , show dctx
-                       ]
-typecheck' _ ZeroP = goal nat cTrue
-typecheck' γ (SucP n) = do
-  g <- typecheck γ n
-  underGoal g $ \ty c ->
+typecheck sub (SucP n) = do
+   g <- typecheck sub n
+   let ?hyps = ?hyps'
+   underGoal' g $ \ty c ->
      goal nat (conj [return c, unify (return ty) nat])
 
-typecheck' γ (LamP (termView -> VLam m)) = do
-  m (const return) $ \v x -> do
-     vnm <- lookupVariableName v
-     sigma ("t_"++vnm) tp $ \t -> do
-       g <- typecheck (Map.insert v (var t) γ) =<< (runChangeT $ weaken 0 1 x)
-       underGoal g $ \xty c ->
-          strengthen v =<< goal (arrow (var t) (return xty)) (return c)
+typecheck sub (LamP (termView -> VLam nm k)) =
+  sigma ("t_"++nm) tp $ \(t :: Var (γ'::>b)) -> do
+    (g :: LF (γ'::>b) GOAL)
+       <- k $ \w _v _a m -> do
+                 tp' <- tp
+                 let ?hyps' = extendHyps ?hyps' ("t_"++nm) QSigma tp'
+                 typecheck (SubstApply (SubstWeak (SubstSkip (weakSubst w sub)))
+                                       (\_ -> var t))
+                             m
+    tp' <- tp
+    let ?hyps = extendHyps ?hyps' "t" QSigma tp'
+    underGoal g $ \wk xty c ->
+      goal (arrow (wk <$> (var t)) (return xty)) (return c)
 
-typecheck' γ (AppP x y) = do
-  g1 <- typecheck γ x
-  underGoal g1 $ \ty1 c1 ->
-    case ty1 of
-      ArrowP tArg tBody -> do
-        g2 <- typecheck γ =<< (autoweaken (return y))
-        underGoal g2 $ \ty2 c2 -> do
-          goal (return tBody) (conj [return c1, return c2, unify (return tArg) (return ty2)])
-      _ -> fail "Expected function type"
-typecheck' γ (NatElimP z s n) = do
-  gz <- typecheck γ z
-  gs <- typecheck γ s
-  gn <- typecheck γ n
-  sigma "t" tp $ \t ->
-    underGoal gz $ \tyz cz ->
-      underGoal gs $ \tys cs ->
-        underGoal gn $ \tyn cn ->
-          goal (var t) (conj [ unify (return tyn) nat
-                             , unify (return tyz) (var t)
-                             , unify (return tys) (arrow (var t) (var t))
-                             , return cz, return cs, return cn])
--}
-{-    
-typecheck (LamP t m) = do
-  g <- typecheck m
-  underGoal g $ \p c ->
-     goal (tmConst "of_lam" @@ return t @@ return 
--}
+typecheck sub (AppP x y) = do
+  g1 <- typecheck sub x
+  g2 <- typecheck sub y
+  let ?hyps = ?hyps'
+  underGoal g1 $ \wk1 ty1 c1 -> do
+    underGoal (wk1 g2) $ \wk2 ty2 c2 -> do
+      sigma "tbody" tp $ \tbody ->
+         goal (var tbody)
+              (conj [ return $ weaken $ wk2 c1
+                    , return $ weaken $ c2
+                    , unify (arrow (return $ weaken ty2) (var tbody))
+                            (return $ weaken $ wk2 $ ty1)
+                    ])
+
+typecheck sub (NatElimP z s n) = do
+  gz <- typecheck sub z
+  gs <- typecheck sub s
+  gn <- typecheck sub n
+  sigma "t" tp $ \t -> do
+    tp' <- tp
+    let ?hyps = extendHyps ?hyps' "t" QSigma tp'
+    underGoal (weaken gz) $ \wk1 tyz cz ->
+      underGoal (wk1 $ weaken gs) $ \wk2 tys cs ->
+        underGoal (wk2 $ wk1 $ weaken gn) $ \wk3 tyn cn -> do
+          t' <- wk3 . wk2 . wk1 <$> var t 
+          goal (return t')
+               (conj [ unify (return $ tyn) nat
+                     , unify (return $ wk3 $ wk2 $ tyz) (return t')
+                     , unify (return $ wk3 $ tys) (arrow (return t') (return t'))
+                     , return $ wk3 $ wk2 cz
+                     , return $ wk3 $ cs
+                     , return cn])
 
 
 -- CBV reduction to head-normal form
@@ -306,11 +302,11 @@ eval tm@(AppP m1 m2) = do
         eval =<< Changed (app m1' (return m2))
 
 -- evaluation under lambdas
-eval tm@(LamP (termView -> VLam k)) =
-  k $ \wk nm _var tp body -> do
+eval tm@(LamP (termView -> VLam nm k)) =
+  k $ \wk _var tp body -> do
     case eval body of
       Changed body' -> do
-        Changed (lam (wk <$> mkLam nm (return tp) body'))
+        Changed (tmConst "lam" @@ (weakening wk <$> mkLam nm (return tp) body'))
       _ -> Unchanged tm
 
 -- nat recursor: zero case
@@ -331,46 +327,44 @@ three :: M (LF E TERM)
 three = suc $ suc $ suc $ zero
 
 add :: M (LF E TERM)
-add = lam (λ"x" tm $ \x ->
-      lam (λ"y" tm $ \y ->
-        nat_elim (var x) (lam (λ"n" tm $ \n -> suc (var n))) (var y)))
+add = lam "x" $ \x ->
+      lam "y" $ \y ->
+        nat_elim (var x) (lam "n" $ \n -> suc (var n)) (var y)
 
 composeN :: M (LF E TERM)
 composeN =
-  lam (λ"f" tm $ \f ->
-    lam (λ"n" tm $ \n ->
-      nat_elim (lam (λ"q" tm $ \q -> var q))
-               (lam (λ"g" tm $ \g ->
-                  lam (λ"q" tm $ \q ->
-                    var f `app` (var g `app` var q))))
-               (var n)))
+  lam "f" $ \f ->
+    lam "n" $ \n ->
+      nat_elim (lam "q" $ \q -> var q)
+               (lam "g" $ \g ->
+                  lam "q" $ \q ->
+                    var f `app` (var g `app` var q))
+               (var n)
 
 testTerm :: LF E TERM
 testTerm =
-  mkTerm sig $ composeN `app` (lam (λ"q" tm $ \q -> tmConst "F" `app` var q)) `app` five `app` tt
-  --mkTerm sig $ add `app` three `app` five
+  mkTerm sig $ add `app` three `app` five
+  --mkTerm sig $ composeN `app` (lam "q" $ \q -> tmConst "F" `app` var q) `app` five `app` tt
+
 
 evalTerm :: LF E TERM
-evalTerm =
-  let ?nms = Set.empty
-      ?hyps = HNil
-   in mkTerm sig $ runChangeT $ eval testTerm
+evalTerm = inEmptyCtx $
+   mkTerm sig $ runChangeT $ eval testTerm
 
-main = sig `seq` do
+main = inEmptyCtx $ do
 {-
-   let x :: LF GOAL
-       x = runM sig $ (typecheck Map.empty =<< add)
-   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec x
-   putStrLn ""
-   --displayIO stdout $ renderSmart 0.7 80 $ runM sig $ (ppLF TopPrec =<< inferType x)
-   --putStrLn ""
--}
-
    let x :: LF E TERM
        x = evalTerm
-   let ?nms = Set.empty
-   let ?hyps = HNil
    displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec x
    putStrLn ""
    displayIO stdout $ renderSmart 0.7 80 $ runM sig $ (ppLF TopPrec =<< inferType x)
    putStrLn ""
+-}
+
+   let ?hyps' = ?hyps 
+   let x :: LF E GOAL
+       x = runM sig $ (typecheck SubstRefl =<< composeN)
+   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec x
+   putStrLn ""
+   --displayIO stdout $ renderSmart 0.7 80 $ runM sig $ (ppLF TopPrec =<< inferType x)
+   --putStrLn ""

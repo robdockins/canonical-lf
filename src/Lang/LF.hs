@@ -10,7 +10,9 @@ module Lang.LF
 
   -- * LF Models 
 , LFModel
+, Var(..)
 , Hyps(..)
+, Quant(..)
 , WFContext
 , WFContextRec
 , IsBoundVar
@@ -19,14 +21,25 @@ module Lang.LF
 , CtxDiff
 , CtxAppend
 , CtxSub
+, Subst(..)
+, hsubst
+, Weakening(..)
+, weakening
+, weakSubst
 
   -- * Term views
 , KindView(..)
 , TypeView(..)
 , TermView(..)
+, GoalView(..)
 , kindView
 , typeView
 , termView
+, goalView
+, extendCtx
+, weakenCtx
+, inEmptyCtx
+, extendHyps
 
   -- * LF type system
 , validateKind
@@ -52,6 +65,7 @@ module Lang.LF
 , var
 , tmConst
 , mkLam
+, mkSigma
 , unify
 , conj
 , cTrue
@@ -62,7 +76,9 @@ module Lang.LF
 , LFApplication (..)
 , LFFunc(..)
 , LFPi(..)
-
+, underGoal
+, underGoal'
+, strengthen
 
 {-
 , underLambda
