@@ -88,4 +88,4 @@ module Lang.LF
 -}
 ) where
 
-import Lang.LF.Model
+import Lang.LF.Internal.Model

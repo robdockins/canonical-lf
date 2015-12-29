@@ -39,7 +39,7 @@ import qualified Data.Set as Set
 
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
-import Lang.LF.Model
+import Lang.LF.Internal.Model
 --import Lang.LF.ChangeT
 
 newtype LFTree a c γ (s::SORT) =

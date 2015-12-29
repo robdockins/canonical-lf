@@ -16,7 +16,7 @@ library
     Lang.LF.Tree
     Lang.LF.ChangeT
   other-modules:
-    Lang.LF.Model
+    Lang.LF.Internal.Model
   build-depends:
     base >= 4.8 && < 5,
     ansi-wl-pprint,

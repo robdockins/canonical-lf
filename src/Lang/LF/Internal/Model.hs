@@ -1,5 +1,5 @@
 {-# LANGUAGE UndecidableInstances #-}
-module Lang.LF.Model where
+module Lang.LF.Internal.Model where
 
 import GHC.Exts ( Constraint )
 
