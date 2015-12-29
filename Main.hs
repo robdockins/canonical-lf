@@ -217,7 +217,8 @@ pattern ArrowP t1 t2 <-
   (termView -> VConst "arrow" [t1,t2])
 
 typecheck :: forall γ γ'
-           . (?nms :: Set String, ?hyps :: H γ, ?hyps' :: H γ',  WFContext γ', WFContext γ)
+           . (?nms :: Set String, ?hyps :: H γ, ?hyps' :: H γ'
+             , WFContext γ', WFContext γ, ?soln :: LFSoln LF)
           => Subst M LF γ γ'
           -> LF γ TERM
           -> M (LF γ' GOAL)
@@ -282,7 +283,7 @@ typecheck sub (NatElimP z s n) = do
 
 
 -- CBV reduction to head-normal form
-eval :: (?nms :: Set String, ?hyps :: H γ, WFContext γ)
+eval :: (?nms :: Set String, ?hyps :: H γ, WFContext γ, ?soln :: LFSoln LF)
      => LF γ TERM
      -> ChangeT M (LF γ TERM)
 
@@ -363,6 +364,7 @@ main = inEmptyCtx $ do
 
    let ?hyps' = ?hyps 
    let x :: LF E GOAL
+       --x = runM sig $ (typecheck SubstRefl =<< add)
        x = runM sig $ (typecheck SubstRefl =<< composeN)
    displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec x
    putStrLn ""

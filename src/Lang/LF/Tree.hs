@@ -11,6 +11,9 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FunctionalDependencies #-}
 
+{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+
 module Lang.LF.Tree
 ( LFTree
 , Signature(..)
@@ -25,6 +28,7 @@ where
 
 import           Control.Monad.Except
 import           Control.Monad.Reader
+import           Control.Monad.State
 --import qualified Data.Foldable as Fold
 import           Data.Map (Map)
 import qualified Data.Map as Map
@@ -45,8 +49,13 @@ newtype LFTree a c γ (s::SORT) =
 type instance LFTypeConst (LFTree a c) = a
 type instance LFConst (LFTree a c) = c
 type instance LFUVar (LFTree a c) = Integer
+type instance LFSoln (LFTree a c) = Map Integer (LFTree a c E TERM)
 
-type M a c = ReaderT (Signature a c) (Except String)
+newtype M a c x = M { unM :: ReaderT (Signature a c) (StateT (LFSoln (LFTree a c)) (Except String)) x }
+
+deriving instance Functor (M a c)
+deriving instance Applicative (M a c)
+deriving instance Monad (M a c)
 
 instance (Pretty a, Pretty c, Ord a, Ord c)
     => LFModel (LFTree a c) (M a c) where
@@ -67,12 +76,12 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
 
   uvarType _ = fail "UVars not implemented"
 
-  constKind a = do
+  constKind a = M $ do
      sig <- ask
      case Map.lookup a (sigFamilies sig) of
        Nothing -> fail $ unwords ["type family lookup failed:", show (pretty a)]
        Just x  -> return x
-  constType c = do
+  constType c = M $ do
      sig <- ask
      case Map.lookup c (sigTerms sig) of
        Nothing -> fail $ unwords ["term constant lookup failed:", show (pretty c)]
@@ -84,19 +93,17 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
   typeView = typeViewLF id
   termView = termViewLF WeakRefl id
   goalView = goalViewLF WeakRefl
+
+  withCurrentSolution x = M $ do
+    soln <- get
+    let ?soln = soln in (unM x)
+
+  commitSolution soln = M $ put soln
+  lookupUVar _ = Map.lookup 
+
+  instantiate = instantiateLF
+
 {-
-
-  typeView = typeViewLF
-  termView = termViewLF
-  underLambda tm action =
-    case unfoldLF tm of
-      Lam nm a m -> do
-        case action m of
-          Changed m' -> Changed (foldLF . Lam nm a =<< extendContext nm QLam a m')
-          _ -> Unchanged tm
-
-      _ -> fail "Expected a lambda term"
-
 dumpContextLF :: (Ord a, Ord c, Pretty a, Pretty c) => M a c Doc
 dumpContextLF = do
    (_,ctx,_) <- ask
@@ -136,11 +143,12 @@ addTypeConstant :: (Ord a, Ord c, Pretty a, Pretty c)
 addTypeConstant sig nm m =
   case Map.lookup nm (sigFamilies sig) of
     Just _ -> fail $ unwords ["Type constant",show (pretty nm),"declared multiple times"]
-    Nothing -> flip runReaderT sig $ do
-           k <- m
+    Nothing -> flip evalStateT Map.empty $ flip runReaderT sig $ do
+           k <- unM m
            let ?nms = Set.empty
            let ?hyps = HNil
-           validateKind k
+           let ?soln = Map.empty
+           unM $ validateKind k
            return sig{ sigFamilies = Map.insert nm k (sigFamilies sig) }
 
 addTermConstant :: (Ord a, Ord c, Pretty a, Pretty c)
@@ -151,11 +159,12 @@ addTermConstant :: (Ord a, Ord c, Pretty a, Pretty c)
 addTermConstant sig nm m =
   case Map.lookup nm (sigTerms sig) of
     Just _ -> fail $ unwords ["Term constant",show (pretty nm),"declared multiple times"]
-    Nothing -> flip runReaderT sig $ do
-           x <- m
+    Nothing -> flip evalStateT Map.empty $ flip runReaderT sig $ do
+           x <- unM m
            let ?nms = Set.empty
            let ?hyps = HNil
-           validateType x
+           let ?soln = Map.empty
+           unM $ validateType x
            return sig{ sigTerms = Map.insert nm x (sigTerms sig) }
 
 buildSignature :: (Ord a, Ord c, Pretty a, Pretty c)
@@ -165,14 +174,21 @@ buildSignature = either error id . runExcept . foldM f emptySig
  where f sig (a ::. x) = addTypeConstant sig a x
        f sig (c :. x)  = addTermConstant sig c x
 
-runM :: Signature a c -> M a c x -> x
-runM sig = either error id . runExcept . flip runReaderT sig
+runM :: Signature a c
+     -> ((?soln :: LFSoln (LFTree a c)) => M a c x)
+     -> x
+runM sig m =
+  let ?soln = Map.empty in
+  either error id $ runExcept $ flip evalStateT Map.empty $ flip runReaderT sig $ unM m
 
 mkTerm :: (Ord a, Ord c, Pretty a, Pretty c)
-       => Signature a c -> M a c (LFTree a c E TERM) -> LFTree a c E TERM
+       => Signature a c
+       -> ((?soln :: LFSoln (LFTree a c)) => M a c (LFTree a c E TERM))
+       -> LFTree a c E TERM
 mkTerm sig m = runM sig $ do
-    m' <- m
     let ?nms = Set.empty
     let ?hyps = HNil
+    let ?soln = Map.empty
+    m' <- m
     _ <- inferType m'
     return m'

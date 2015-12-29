@@ -12,7 +12,7 @@ import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
---import           Lang.LF.ChangeT
+import           Lang.LF.ChangeT
 
 --import qualified Debug.Trace as Debug
 
@@ -46,6 +46,7 @@ data Ctx k = E | Ctx k ::> k
 type family LFTypeConst (f :: Ctx * -> SORT -> *) :: *
 type family LFConst (f :: Ctx * -> SORT -> *) :: *
 type family LFUVar (f :: Ctx * -> SORT -> *) :: *
+type family LFSoln (f :: Ctx * -> SORT -> *) :: *
 
 -- | The syntax algebra of canonical LF terms, parameterized
 --   by the type of subterms `f`, the type `a` of type family
@@ -148,7 +149,7 @@ data TermView f m γ
  | VLam String
          (forall x.
            (forall   γ'. (WFContext γ', ?nms :: Set String, ?hyps :: Hyps f (γ'::>()))
-                      => Weakening γ' γ  --(forall s. f γ' s -> f γ s)
+                      => Weakening γ' γ
                       -> Var (γ'::> ())
                       -> f γ' TYPE
                       -> f (γ'::> ()) TERM
@@ -156,8 +157,9 @@ data TermView f m γ
            -> x)
 
 termViewLF :: forall f m γ γ'
-            . (WFContext γ', LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ')
-           => Weakening γ' γ   --(forall s. f γ' s -> f γ s)
+            . (WFContext γ', LFModel f m, ?nms :: Set String
+              , ?hyps :: Hyps f γ', ?soln :: LFSoln f)
+           => Weakening γ' γ
            -> (Var γ' -> Var γ)
            -> f γ' TERM
            -> TermView f m γ
@@ -170,7 +172,7 @@ termViewLF w wv m =
 
  where go :: forall γ γ'
             . WFContext γ'
-           => Weakening γ' γ --(forall s. f γ' s -> f γ s)
+           => Weakening γ' γ
            -> (Var γ' -> Var γ)
            -> [f γ TERM]
            -> f γ' ATERM
@@ -232,11 +234,11 @@ weakening :: LFModel f m
 weakening WeakRefl  = id
 weakening (WeakR w) = weaken . weakening w
 weakening (WeakL w) = weakening w . weaken
-weakening (WeakTrans w₁ w₂) = weakening w₂ . weakening w₁ 
+weakening (WeakTrans w₁ w₂) = weakening w₂ . weakening w₁
 
 
 
-strengthen :: LFModel f m
+strengthen :: (LFModel f m, ?soln :: LFSoln f)
            => f (γ::>b) s
            -> m (f γ s)
 strengthen =
@@ -265,7 +267,7 @@ extendCtx :: (?nms :: Set String, ?hyps :: Hyps f γ)
           -> f γ TYPE
           -> ((?nms :: Set String, ?hyps :: Hyps f (γ::>())) => x)
           -> x
-extendCtx nm q a f = 
+extendCtx nm q a f =
   let nm' = freshName nm in
   let ?nms = Set.insert nm ?nms in
   let ?hyps = extendHyps ?hyps nm' q a in
@@ -279,50 +281,67 @@ class (Ord (LFTypeConst f), Ord (LFConst f), Ord (LFUVar f),
   foldLF :: LF f γ s -> m (f γ s)
   weaken :: f γ s -> f (γ::>b) s
 
-  hsubst :: Subst m f γ γ'
+  hsubst :: (?soln :: LFSoln f)
+         => Subst m f γ γ'
          -> f γ s
          -> m (f γ' s)
 
-  ppLF :: (WFContext γ, ?nms :: Set String, ?hyps :: Hyps f γ)
+  ppLF :: (WFContext γ, ?nms :: Set String, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
        => Prec
        -> f γ s
        -> m Doc
 
-  validateKind :: (WFContext γ, ?nms::Set String, ?hyps::Hyps f γ) => f γ KIND  -> m ()
-  validateType :: (WFContext γ, ?nms::Set String, ?hyps::Hyps f γ) => f γ TYPE  -> m ()
-  inferKind    :: (WFContext γ, ?nms::Set String, ?hyps::Hyps f γ) => f γ ATYPE -> m (f γ KIND)
-  inferType    :: (WFContext γ, ?nms::Set String, ?hyps::Hyps f γ) => f γ TERM  -> m (f γ TYPE)
-  inferAType   :: (WFContext γ, ?nms::Set String, ?hyps::Hyps f γ) => f γ ATERM -> m (f γ TYPE)
-  validateGoal :: (WFContext γ, ?nms::Set String, ?hyps::Hyps f γ) => f γ GOAL  -> m ()
-  validateCon  :: (WFContext γ, ?nms::Set String, ?hyps::Hyps f γ) => f γ CON   -> m ()
-  alphaEq      :: WFContext γ => f γ s -> f γ s -> m Bool
-  freeVar      :: WFContext γ => Var γ -> f γ s -> Bool
+  validateKind :: (WFContext γ, ?nms::Set String, ?hyps::Hyps f γ, ?soln :: LFSoln f)
+               => f γ KIND  -> m ()
+
+  validateType :: (WFContext γ, ?nms::Set String, ?hyps::Hyps f γ, ?soln :: LFSoln f)
+               => f γ TYPE  -> m ()
+
+  inferKind    :: (WFContext γ, ?nms::Set String, ?hyps::Hyps f γ, ?soln :: LFSoln f)
+               => f γ ATYPE -> m (f γ KIND)
+
+  inferType    :: (WFContext γ, ?nms::Set String, ?hyps::Hyps f γ, ?soln :: LFSoln f)
+               => f γ TERM  -> m (f γ TYPE)
+
+  inferAType   :: (WFContext γ, ?nms::Set String, ?hyps::Hyps f γ, ?soln :: LFSoln f)
+               => f γ ATERM -> m (f γ TYPE)
+
+  validateGoal :: (WFContext γ, ?nms::Set String, ?hyps::Hyps f γ, ?soln :: LFSoln f)
+               => f γ GOAL  -> m ()
+
+  validateCon  :: (WFContext γ, ?nms::Set String, ?hyps::Hyps f γ, ?soln :: LFSoln f)
+               => f γ CON   -> m ()
+
+  alphaEq      :: (WFContext γ, ?soln :: LFSoln f) => f γ s -> f γ s -> m Bool
+
+  freeVar      :: (WFContext γ, ?soln :: LFSoln f) => Var γ -> f γ s -> Bool
 
   constKind :: LFTypeConst f -> m (f E KIND)
   constType :: LFConst f -> m (f E TYPE)
   uvarType  :: LFUVar f -> m (f E TYPE)
 
-  kindView :: (WFContext γ, ?nms :: Set String, ?hyps :: Hyps f γ)
+  kindView :: (WFContext γ, ?nms :: Set String, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
            => f γ KIND
            -> KindView f m γ
 
-  typeView :: (WFContext γ, ?nms :: Set String, ?hyps :: Hyps f γ)
+  typeView :: (WFContext γ, ?nms :: Set String, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
            => f γ TYPE
            -> TypeView f m γ
 
-  termView :: (WFContext γ, ?nms :: Set String, ?hyps :: Hyps f γ)
+  termView :: (WFContext γ, ?nms :: Set String, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
            => f γ TERM
            -> TermView f m γ
 
-  goalView :: (WFContext γ, ?nms :: Set String, ?hyps :: Hyps f γ)
+  goalView :: (WFContext γ, ?nms :: Set String, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
            => f γ GOAL
            -> GoalView f m γ
 
-{-
-  underLambda :: f γ TERM
-              -> (f γ TERM -> ChangeT m (f γ TERM))
-              -> ChangeT m (f γ TERM)
--}
+  withCurrentSolution :: ((?soln :: LFSoln f) => m x) -> m x
+  commitSolution :: LFSoln f -> m ()
+  lookupUVar :: Proxy f -> LFUVar f -> LFSoln f -> Maybe (f E TERM)
+
+  instantiate :: (WFContext γ, ?soln :: LFSoln f)
+              => f γ s -> ChangeT m (f γ s)
 
 
 type family CtxAppend γ γ' :: Ctx * where
@@ -458,7 +477,7 @@ tyApp a m = join (go1 <$> a <*> m)
      TyPi _ _ _ -> do
         fail $ unwords ["Cannot apply terms to Pi Types"]
 
-displayLF :: (WFContext γ, LFModel f m, ?nms :: Set String, ?hyps::Hyps f γ)
+displayLF :: (WFContext γ, LFModel f m, ?nms :: Set String, ?hyps::Hyps f γ, ?soln :: LFSoln f)
           => f γ s -> m String
 displayLF x = show <$> ppLF TopPrec x
 
@@ -500,7 +519,7 @@ app x y = join (go1 <$> x <*> y)
    case unfoldLF x' of
      Weak x''  -> go2 x'' y' (w . weaken) (SubstWeak s)
      ATerm r   -> foldLF . ATerm =<< foldLF (App (w r) y')
-     Lam _ _ m -> hsubst (SubstApply s (\_ -> return y')) m
+     Lam _ _ m -> withCurrentSolution (hsubst (SubstApply s (\_ -> return y')) m)
 
 cExists :: LFModel f m
         => String
@@ -559,7 +578,7 @@ goal m c = foldLF =<< (Goal <$> m <*> c)
 
 
 unify :: forall f m γ
-       . (WFContext γ, LFModel f m)
+       . (WFContext γ, LFModel f m, ?soln :: LFSoln f)
       => m (f γ TERM)
       -> m (f γ TERM)
       -> m (f γ CON)
@@ -567,7 +586,7 @@ unify x y = join (unifyTm SubstRefl SubstRefl <$> x <*> y)
 
 
 unifyTm :: forall f m γ₁ γ₂ γ
-      . (WFContext γ, LFModel f m)
+      . (WFContext γ, LFModel f m, ?soln :: LFSoln f)
      => (Subst m f γ₁ γ)
      -> (Subst m f γ₂ γ)
      -> f γ₁ TERM
@@ -582,7 +601,7 @@ unifyTm s₁ s₂ x y =
          case res of
            UnifyFail ->
              liftClosed <$> foldLF Fail
-           UnifyDefault -> 
+           UnifyDefault ->
              foldLF =<< Unify <$> hsubst s₁ r1 <*> hsubst s₂ r2
            UnifyDecompose cs ->
              foldLF (And cs)
@@ -594,7 +613,7 @@ unifyTm s₁ s₂ x y =
      _ -> fail "Attempting to unify LF terms with unequal types"
 
 unifyTy :: forall f m γ₁ γ₂ γ
-      . (WFContext γ, LFModel f m)
+      . (WFContext γ, LFModel f m, ?soln :: LFSoln f)
      => (Subst m f γ₁ γ)
      -> (Subst m f γ₂ γ)
      -> f γ₁ TYPE
@@ -614,7 +633,7 @@ unifyTy s₁ s₂ x y =
     _ -> fail "Attempting to unify LF types of different kinds"
 
 unifyATy :: forall f m γ₁ γ₂ γ
-      . (WFContext γ, LFModel f m)
+      . (WFContext γ, LFModel f m, ?soln :: LFSoln f)
      => (Subst m f γ₁ γ)
      -> (Subst m f γ₂ γ)
      -> f γ₁ ATYPE
@@ -624,7 +643,7 @@ unifyATy s₁ s₂ x y =
   case (unfoldLF x, unfoldLF y) of
     (Weak x', _) -> unifyATy (SubstWeak s₁) s₂ x' y
     (_, Weak y') -> unifyATy s₁ (SubstWeak s₂) x y'
-    (TyConst c1, TyConst c2) 
+    (TyConst c1, TyConst c2)
       | c1 == c2  -> foldLF (And [])
     (TyApp p1 m1, TyApp p2 m2) -> do
       conj [ unifyATy s₁ s₂ p1 p2
@@ -648,7 +667,7 @@ data UnifyResult f γ
   | UnifyFail
 
 unifyATm :: forall f m γ₁ γ₂ γ
-      . (WFContext γ, LFModel f m)
+      . (WFContext γ, LFModel f m, ?soln :: LFSoln f)
      => (Subst m f γ₁ γ)
      -> (Subst m f γ₂ γ)
      -> f γ₁ ATERM
@@ -673,7 +692,7 @@ unifyATm s₁ s₂ x y =
 
 
 underGoal :: forall f m γ
-           . (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ, WFContext γ)
+           . (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ, WFContext γ, ?soln :: LFSoln f)
           => f γ GOAL
           -> (forall γ'
               . (?nms :: Set String, ?hyps :: Hyps f γ', WFContext γ')
@@ -788,7 +807,7 @@ alphaEqLF w₁ w₂ x y =
     _ -> return False
 
 validateKindLF :: forall f m γ
-                . (WFContext γ, LFModel f m, ?nms::Set String, ?hyps::Hyps f γ)
+                . (WFContext γ, LFModel f m, ?nms::Set String, ?hyps::Hyps f γ, ?soln :: LFSoln f)
                => f γ KIND
                -> m ()
 validateKindLF tm =
@@ -803,7 +822,7 @@ validateKindLF tm =
 
 
 validateTypeLF :: forall f m γ
-                . (WFContext γ, LFModel f m, ?nms::Set String, ?hyps:: Hyps f γ)
+                . (WFContext γ, LFModel f m, ?nms::Set String, ?hyps:: Hyps f γ, ?soln :: LFSoln f)
                => f γ TYPE
                -> m ()
 validateTypeLF tm =
@@ -824,7 +843,7 @@ validateTypeLF tm =
       KPi _ _ _ -> fail "invalid atomic type"
 
 inferKindLF :: forall f m γ
-             . (WFContext γ, LFModel f m, ?nms::Set String, ?hyps::Hyps f γ)
+             . (WFContext γ, LFModel f m, ?nms::Set String, ?hyps::Hyps f γ, ?soln :: LFSoln f)
             => f γ ATYPE
             -> m (f γ KIND)
 inferKindLF tm =
@@ -853,7 +872,7 @@ inferKindLF tm =
          kdoc <- let ?hyps = h in displayLF k
          fail $ unwords ["invalid atomic type family", kdoc]
 
-checkType :: (WFContext γ, LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ)
+checkType :: (WFContext γ, LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
           => f γ s
           -> f γ TERM
           -> f γ TYPE
@@ -876,7 +895,7 @@ checkType z m a = do
 
 
 inferTypeLF :: forall f m γ
-             . (WFContext γ, LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ)
+             . (WFContext γ, LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
             => f γ TERM
             -> m (f γ TYPE)
 inferTypeLF m =
@@ -906,7 +925,7 @@ inferTypeLF m =
                           ]
 
 inferATypeLF :: forall m f γ
-              . (WFContext γ, LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ)
+              . (WFContext γ, LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
              => f γ ATERM
              -> m (f γ TYPE)
 inferATypeLF r =
@@ -941,7 +960,7 @@ inferATypeLF r =
 
 
 validateGoalLF :: forall f m γ
-                . (WFContext γ, LFModel f m, ?nms::Set String, ?hyps:: Hyps f γ)
+                . (WFContext γ, LFModel f m, ?nms::Set String, ?hyps:: Hyps f γ, ?soln :: LFSoln f)
                => f γ GOAL
                -> m ()
 validateGoalLF g =
@@ -956,7 +975,7 @@ validateGoalLF g =
 
 
 validateConLF :: forall f m γ
-                . (WFContext γ, LFModel f m, ?nms::Set String, ?hyps:: Hyps f γ)
+                . (WFContext γ, LFModel f m, ?nms::Set String, ?hyps:: Hyps f γ, ?soln :: LFSoln f)
                => f γ CON
                -> m ()
 validateConLF c =
@@ -983,8 +1002,79 @@ data Subst m f :: Ctx * -> Ctx * -> * where
   SubstWeak  :: Subst m f (γ ::> b) γ' -> Subst m f γ γ'
   SubstSkip  :: Subst m f γ γ' -> Subst m f (γ ::> b) (γ' ::> b)
 
+
+instantiateLF :: forall f m γ s
+          . (WFContext γ, LFModel f m, ?soln :: LFSoln f)
+         => f γ s -> ChangeT m (f γ s)
+instantiateLF tm =
+  case unfoldLF tm of
+    Weak x -> weaken <$> instantiate x
+
+    Type   -> Unchanged tm
+    KPi nm ty k -> onChange tm foldLF (KPi nm <$> instantiate ty <*> instantiate k)
+
+    AType x -> onChange tm foldLF (AType <$> instantiate x)
+    TyPi nm t1 t2 -> onChange tm foldLF (TyPi nm <$> instantiate t1 <*> instantiate t2)
+    TyConst _ -> Unchanged tm
+    TyApp t m -> onChange tm foldLF (TyApp <$> instantiate t <*> instantiate m)
+
+    ATerm x ->
+      case go x of
+        Left _  -> Unchanged tm
+        Right m -> Changed m
+    Lam nm ty m -> onChange tm foldLF (Lam nm <$> instantiate ty <*> instantiate m)
+
+    Var _ -> Unchanged tm
+    Const _ -> Unchanged tm
+    App _ _ -> Unchanged tm
+    UVar _ -> Unchanged tm
+
+    Fail -> Unchanged tm
+    Unify x y -> do
+      res <- case (go x, go y) of
+        (Left _, Left _) -> return UnifyDefault
+        (Left x', Right my) -> Changed $ do
+          ATerm y' <- unfoldLF <$> my
+          unifyATm SubstRefl SubstRefl x' y'
+        (Right mx, Left y') -> Changed $ do
+          ATerm x' <- unfoldLF <$> mx
+          unifyATm SubstRefl SubstRefl x' y'
+        (Right mx, Right my) -> Changed $ do
+          ATerm x' <- unfoldLF <$> mx
+          ATerm y' <- unfoldLF <$> my
+          unifyATm SubstRefl SubstRefl x' y'
+      case res of
+        UnifyDefault      -> Unchanged tm
+        UnifyFail         -> Changed (liftClosed <$> foldLF Fail)
+        UnifyDecompose xs -> Changed (foldLF (And xs))
+
+    And xs -> onChange tm foldLF (And <$> mapM instantiate xs)
+    Forall nm ty c -> onChange tm foldLF (Forall nm <$> instantiate ty <*> instantiate c)
+    Exists nm ty c -> onChange tm foldLF (Exists nm <$> instantiate ty <*> instantiate c)
+
+    Goal m c -> onChange tm foldLF (Goal <$> instantiate m <*> instantiate c)
+    Sigma nm ty g -> onChange tm foldLF (Sigma nm <$> instantiate ty <*> instantiate g)
+
+ where
+  go :: forall γ. WFContext γ => f γ ATERM -> Either (f γ ATERM) (m (f γ TERM))
+  go atm =
+    case unfoldLF atm of
+      Weak x ->
+        case go x of
+          Left x' -> Left (weaken x')
+          Right m -> Right (weaken <$> m)
+      Var _   -> Left atm
+      Const _ -> Left atm
+      App m1 m2 ->
+        case go m1 of
+          Left _ -> Left atm
+          Right m1' -> Right (app m1' (return m2))
+      UVar u
+        | Just tm <- lookupUVar Proxy u ?soln -> Right (return tm)
+        | otherwise -> Left atm
+
 hsubstLF :: forall f m s γ γ'
-          . LFModel f m
+          . (LFModel f m, ?soln :: LFSoln f)
          => Subst m f γ γ'
          -> f γ s
          -> m (f γ' s)
@@ -1042,11 +1132,7 @@ hsubstLF sub tm =
      Const _      -> f =<< hsubstTm sub tm
      Var _        -> f =<< hsubstTm sub tm
      App _ _      -> f =<< hsubstTm sub tm
-     UVar _ ->
-        case sub of
-          SubstRefl   -> return tm
-          SubstWeak s -> hsubst s (weaken tm)
-          _ -> error "impossible"
+     UVar _       -> f =<< hsubstTm sub tm
 
  where
   sub' :: forall b. Subst m f (γ ::> b) (γ' ::> b)
@@ -1060,12 +1146,10 @@ hsubstLF sub tm =
 {- FIXME? rewrite this in continuation passing form
     to avoid repeated matching on Either values. -}
 hsubstTm :: forall m f γ γ'
-          . (LFModel f m)
+          . (LFModel f m, ?soln :: LFSoln f)
          => Subst m f γ γ'
          -> f γ ATERM
          -> m (Either (f γ' TERM) (f γ' ATERM))
-hsubstTm SubstRefl tm = return (Right tm)
-hsubstTm (SubstWeak s) tm = hsubstTm s (weaken tm)
 hsubstTm sub tm =
          case unfoldLF tm of
            Weak x ->
@@ -1084,9 +1168,12 @@ hsubstTm sub tm =
                SubstApply _ f -> Left <$> f v
                SubstSkip _    -> Right <$> foldLF (Var v)
 
-           UVar _ ->
+           UVar u ->
              case sub of
-               SubstRefl   -> return $ Right tm
+               SubstRefl ->
+                 case lookupUVar Proxy u ?soln of
+                   Just m  -> return $ Left m
+                   Nothing -> return $ Right tm
                SubstWeak s -> hsubstTm s (weaken tm)
                _ -> error "impossible"
 
@@ -1097,13 +1184,16 @@ hsubstTm sub tm =
                _ -> error "impossible"
 
            App r1 m2 -> do
-             r1' <- hsubstTm sub r1
-             m2' <- hsubst sub m2
-             case r1' of
-               Left m1' ->
-                 Left <$> gosub1 m1' m2'
-               Right r1'' ->
-                 Right <$> foldLF (App r1'' m2')
+             case sub of
+               SubstRefl -> return $ Right tm
+               _ -> do
+                r1' <- hsubstTm sub r1
+                m2' <- hsubst sub m2
+                case r1' of
+                  Left m1' ->
+                    Left <$> gosub1 m1' m2'
+                  Right r1'' ->
+                    Right <$> foldLF (App r1'' m2')
 
  where
   gosub1 :: forall γ. f γ TERM -> f γ TERM -> m (f γ TERM)
@@ -1114,7 +1204,7 @@ hsubstTm sub tm =
 
   gosub2 :: forall γ γ'. f γ TERM
                       -> f γ' TERM
-                      -> (Subst m f γ γ')
+                      -> Subst m f γ γ'
                       -> m (f γ' TERM)
   gosub2 x y s =
     case unfoldLF x of
@@ -1171,7 +1261,7 @@ extendHyps :: Hyps f γ -> String -> Quant -> f γ TYPE -> Hyps f (γ ::> b)
 extendHyps h nm q a = HCons h q (\_ -> (nm,a))
 
 prettyLF
-      :: (WFContext γ, LFModel f m, ?nms::Set String, ?hyps::Hyps f γ)
+      :: (WFContext γ, LFModel f m, ?nms::Set String, ?hyps::Hyps f γ, ?soln :: LFSoln f)
       => Prec
       -> f γ s
       -> m Doc
@@ -1228,7 +1318,7 @@ prettyLF prec x =
          m2doc <- ppLF AppRPrec m2
          return $! group $ (if prec == AppRPrec then parens else id) $
             (m1doc <> line <> m2doc)
-    Var v -> 
+    Var v ->
       let (nm,_,_) = lookupVar ?hyps (B v)
        in return $ text nm
 

@@ -8,8 +8,9 @@ module Lang.LF
 , GOAL
 , type Ctx(..)
 
-  -- * LF Models 
+  -- * LF Models
 , LFModel
+, LFSoln
 , Var(..)
 , Hyps(..)
 , Quant(..)
@@ -26,6 +27,8 @@ module Lang.LF
 , Weakening(..)
 , weakening
 , weakSubst
+, withCurrentSolution
+, commitSolution
 
   -- * Term views
 , KindView(..)
@@ -79,13 +82,9 @@ module Lang.LF
 , underGoal
 , underGoal'
 , strengthen
-
 {-
-, underLambda
-, underGoal
 , solve
 , dumpContext
-, strengthen
 -}
 ) where
 
