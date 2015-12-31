@@ -39,19 +39,48 @@ import qualified Data.Set as Set
 
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
+import Lang.LF.Internal.Hyps
 import Lang.LF.Internal.Model
+import Lang.LF.Internal.Print
+import Lang.LF.Internal.Solve
+import Lang.LF.Internal.Subst
+import Lang.LF.Internal.Typecheck
+import Lang.LF.Internal.View
+
 --import Lang.LF.ChangeT
 
 newtype LFTree a c γ (s::SORT) =
   LFTree { lfTree :: LF (LFTree a c) γ s
          }
 
+instance (Pretty a, Pretty c, Ord a, Ord c) => Show (LFTree a c E s) where
+  show x =
+    runM emptySig (inEmptyCtx (let ?soln = Map.empty in displayLF x))
+
+type Soln a c = Map Integer (LFTree a c E TERM)
+
+data UVarState a c =
+  UVarState
+  { curSoln :: Soln a c
+  , uvarTypes :: Map Integer (LFTree a c E TYPE)
+  , uvarNext :: !Integer
+  }
+
+emptyUVarState :: UVarState a c
+emptyUVarState =
+  UVarState
+  { curSoln = Map.empty
+  , uvarTypes = Map.empty
+  , uvarNext = 0
+  }
+
+
 type instance LFTypeConst (LFTree a c) = a
 type instance LFConst (LFTree a c) = c
 type instance LFUVar (LFTree a c) = Integer
-type instance LFSoln (LFTree a c) = Map Integer (LFTree a c E TERM)
+type instance LFSoln (LFTree a c) = Soln a c
 
-newtype M a c x = M { unM :: ReaderT (Signature a c) (StateT (LFSoln (LFTree a c)) (Except String)) x }
+newtype M a c x = M { unM :: ReaderT (Signature a c) (StateT (UVarState a c) (Except String)) x }
 
 deriving instance Functor (M a c)
 deriving instance Applicative (M a c)
@@ -63,6 +92,8 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
   foldLF = return . LFTree
   hsubst = hsubstLF
   weaken = LFTree . Weak
+  aterm = LFTree . ATerm
+  atype = LFTree . AType
   ppLF = prettyLF
   validateKind = validateKindLF
   validateType = validateTypeLF
@@ -73,8 +104,6 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
   validateCon = validateConLF
 
   alphaEq = alphaEqLF id id
-
-  uvarType _ = fail "UVars not implemented"
 
   constKind a = M $ do
      sig <- ask
@@ -93,13 +122,31 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
   typeView = typeViewLF id
   termView = termViewLF WeakRefl id
   goalView = goalViewLF WeakRefl
+  constraintView = constraintViewLF WeakRefl
 
   withCurrentSolution x = M $ do
-    soln <- get
+    soln <- curSoln <$> get
     let ?soln = soln in (unM x)
-
-  commitSolution soln = M $ put soln
+  commitSolution soln = M $ modify (\s -> s{ curSoln = soln })
   lookupUVar _ = Map.lookup 
+  uvarType u = M $ do
+    tps <- uvarTypes <$> get
+    case Map.lookup u tps of
+      Just tp -> return tp
+      Nothing -> fail $ unwords ["invalid UVar: ", show u]
+  freshUVar tp = M $ do
+    s <- get
+    let n = uvarNext s
+    put s{ uvarNext = n + 1
+         , uvarTypes = Map.insert n tp $ uvarTypes s
+         }
+    return n
+  extendSolution u tm soln = M $ do
+    case Map.lookup u soln of
+      Nothing -> return $ Just $ Map.insert u tm soln
+      Just _  -> return $ Nothing
+
+  solve = solveLF
 
   instantiate = instantiateLF
 
@@ -143,7 +190,7 @@ addTypeConstant :: (Ord a, Ord c, Pretty a, Pretty c)
 addTypeConstant sig nm m =
   case Map.lookup nm (sigFamilies sig) of
     Just _ -> fail $ unwords ["Type constant",show (pretty nm),"declared multiple times"]
-    Nothing -> flip evalStateT Map.empty $ flip runReaderT sig $ do
+    Nothing -> flip evalStateT emptyUVarState $ flip runReaderT sig $ do
            k <- unM m
            let ?nms = Set.empty
            let ?hyps = HNil
@@ -159,7 +206,7 @@ addTermConstant :: (Ord a, Ord c, Pretty a, Pretty c)
 addTermConstant sig nm m =
   case Map.lookup nm (sigTerms sig) of
     Just _ -> fail $ unwords ["Term constant",show (pretty nm),"declared multiple times"]
-    Nothing -> flip evalStateT Map.empty $ flip runReaderT sig $ do
+    Nothing -> flip evalStateT emptyUVarState $ flip runReaderT sig $ do
            x <- unM m
            let ?nms = Set.empty
            let ?hyps = HNil
@@ -179,7 +226,7 @@ runM :: Signature a c
      -> x
 runM sig m =
   let ?soln = Map.empty in
-  either error id $ runExcept $ flip evalStateT Map.empty $ flip runReaderT sig $ unM m
+  either error id $ runExcept $ flip evalStateT emptyUVarState $ flip runReaderT sig $ unM m
 
 mkTerm :: (Ord a, Ord c, Pretty a, Pretty c)
        => Signature a c

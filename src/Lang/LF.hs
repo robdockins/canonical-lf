@@ -10,7 +10,11 @@ module Lang.LF
 
   -- * LF Models
 , LFModel
+, LFTypeConst
+, LFConst
+, LFUVar
 , LFSoln
+
 , Var(..)
 , Hyps(..)
 , Quant(..)
@@ -34,15 +38,18 @@ module Lang.LF
 , KindView(..)
 , TypeView(..)
 , TermView(..)
+, ConstraintView(..)
 , GoalView(..)
 , kindView
 , typeView
 , termView
+, constraintView
 , goalView
 , extendCtx
 , weakenCtx
 , inEmptyCtx
 , extendHyps
+, freshUVar
 
   -- * LF type system
 , validateKind
@@ -66,6 +73,7 @@ module Lang.LF
 , tyArrow
 , λ
 , var
+, uvar
 , tmConst
 , mkLam
 , mkSigma
@@ -76,16 +84,23 @@ module Lang.LF
 , cExists
 , sigma
 , goal
+, goal'
 , LFApplication (..)
 , LFFunc(..)
 , LFPi(..)
 , underGoal
 , underGoal'
 , strengthen
-{-
 , solve
+, instantiate
+{-
+
 , dumpContext
 -}
 ) where
 
+import Lang.LF.Internal.Build
+import Lang.LF.Internal.Hyps
 import Lang.LF.Internal.Model
+import Lang.LF.Internal.Subst
+import Lang.LF.Internal.Typecheck

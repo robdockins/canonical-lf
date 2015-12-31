@@ -4,6 +4,8 @@ module Main where
 
 import Prelude hiding (pi, abs)
 
+import Control.Monad.Trans.Class
+import Control.Monad.State
 --import           Data.Sequence (Seq, (|>))
 --import qualified Data.Sequence as Seq
 import           Data.Set (Set)
@@ -18,7 +20,7 @@ import           Lang.LF.ChangeT
 import           Lang.LF.Tree hiding (M)
 import qualified Lang.LF.Tree as Tree
 
---import qualified Debug.Trace as Debug
+import qualified Debug.Trace as Debug
 
 type LF = Tree.LFTree String String
 type Sig = Tree.Signature String String
@@ -216,6 +218,67 @@ pattern SucP n <-
 pattern ArrowP t1 t2 <-
   (termView -> VConst "arrow" [t1,t2])
 
+
+addConstraint 
+   :: M (LF E CON)
+   -> StateT [LF E CON] M ()
+addConstraint c = do
+   x <- lift c
+   modify (x:)
+
+tc :: ( WFContext γ, ?soln :: LFSoln LF
+      , ?hyps :: H γ, ?nms :: Set String)
+   => Subst M LF γ E
+   -> LF γ TERM
+   -> StateT [LF E CON] M (LF E TERM)
+
+tc sub (termView -> VVar v []) =
+  lift (hsubst sub =<< var v)
+
+tc _ ZeroP =
+  lift nat
+
+tc sub (SucP n) = do
+  t <- tc sub n
+  addConstraint $
+     unify (return t) nat
+  return t
+
+tc sub (LamP (termView -> VLam _nm k)) = k $ \w _v _t m -> do
+  t1 <- lift (uvar =<< freshUVar =<< tp)
+  let sub' = SubstApply (weakSubst w sub)
+                        (\_ -> return $ liftClosed t1)
+  t2 <- tc sub' m
+  lift (arrow (return t1) (return t2))
+
+tc sub (AppP m1 m2) = do
+  tf    <- tc sub m1
+  targ  <- tc sub m2
+  tbody <- lift (uvar =<< freshUVar =<< tp)
+  addConstraint $
+     unify (return tf) (arrow (return targ) (return tbody))
+  return tbody
+
+tc sub (NatElimP z s n) = do
+  tyz <- tc sub z
+  tys <- tc sub s
+  tyn <- tc sub n
+  addConstraint $
+     unify (return tys) (arrow (return tyz) (return tyz))
+  addConstraint $
+     unify (return tyn) nat
+  return tyz
+
+
+runTC :: LF E TERM -> M (LF E GOAL)
+runTC tm = withCurrentSolution $ inEmptyCtx $ do
+  (ty, cs) <- flip runStateT [] $ tc SubstRefl tm
+  (cs', soln) <- solve =<< conj (map return cs)
+  Debug.trace (show soln) $ commitSolution soln
+  let ?soln = soln 
+  ty' <- runChangeT $ instantiate ty
+  goal (return ty') (return cs')
+
 typecheck :: forall γ γ'
            . (?nms :: Set String, ?hyps :: H γ, ?hyps' :: H γ'
              , WFContext γ', WFContext γ, ?soln :: LFSoln LF)
@@ -364,8 +427,8 @@ main = inEmptyCtx $ do
 
    let ?hyps' = ?hyps 
    let x :: LF E GOAL
-       --x = runM sig $ (typecheck SubstRefl =<< add)
-       x = runM sig $ (typecheck SubstRefl =<< composeN)
+       x = runM sig $ (runTC =<< composeN)
+       --x = runM sig $ (runTC =<< add)
    displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec x
    putStrLn ""
    --displayIO stdout $ renderSmart 0.7 80 $ runM sig $ (ppLF TopPrec =<< inferType x)
