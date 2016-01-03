@@ -22,7 +22,8 @@ module Lang.LF
 , WFContextRec
 , IsBoundVar
 , LiftClosed(..)
-, AutoWeaken(..)
+, AutoWeaken
+, autoweaken
 , CtxDiff
 , CtxAppend
 , CtxSub
