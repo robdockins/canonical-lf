@@ -5,7 +5,7 @@ import Data.Proxy
 import Lang.LF.ChangeT
 import Lang.LF.Internal.Build
 import Lang.LF.Internal.Model
-
+import Lang.LF.Internal.Solve
 
 weakSubst :: Weakening γ₁ γ₂
           -> Subst m f γ₂ γ₃

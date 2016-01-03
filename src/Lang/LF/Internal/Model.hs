@@ -158,99 +158,89 @@ data Subst m f :: Ctx * -> Ctx * -> * where
   SubstSkip  :: Subst m f γ γ' -> Subst m f (γ ::> b) (γ' ::> b)
 
 -- | This datastructure represents the ways a canonical LF kind can be viewed.
---   A kind is either the constant 'type' or a Π binder.  In the binder case,
---   a continuation is provided that allows access to the subterm.
-data KindView f m γ
- = VType
- | VKPi (forall x.
-           (forall γ'. (WFContext (γ'::>()), ?nms :: Set String, ?hyps :: Hyps f (γ'::>()))
-                    => (forall s. f γ' s -> f γ s)
-                    -> String
-                    -> Var (γ'::>())
-                    -> f γ' TYPE
-                    -> f (γ'::>()) KIND
-                    -> x)
-           -> x)
+--   A kind is either the constant 'type' or a Π binder.
+data KindView f m γ where
+ VType :: KindView f m γ
+ VKPi :: forall f m γ γ'
+       . (WFContext (γ'::>()), ?nms :: Set String, ?hyps :: Hyps f (γ'::>()))
+      => String
+      -> Weakening γ' γ
+      -> Var (γ'::>())
+      -> f γ' TYPE
+      -> f (γ'::>()) KIND
+      -> KindView f m γ
 
 -- | This datastructure represents the ways a canonical LF type family can be viewed.
 --   A type is either a type constant applied to a sequence of arguments or
---   a Π binder.   In the binder case,
---   a continuation is provided that allows access to the subterm.
-data TypeView f m γ
- = VTyConst (LFTypeConst f) [f γ TERM]
- | VTyPi (forall x.
-           (forall   γ'. (WFContext γ', ?nms :: Set String, ?hyps :: Hyps f (γ'::>()))
-                      => (forall s. f γ' s -> f γ s)
-                      -> String
-                      -> Var (γ'::>())
-                      -> f γ' TYPE
-                      -> f (γ'::>()) TYPE
-                      -> x)
-           -> x)
+--   a Π binder.
+data TypeView f m γ where
+ VTyConst :: LFTypeConst f -> [f γ TERM] -> TypeView f m γ
+ VTyPi :: forall f m γ γ'
+        . (WFContext γ', ?nms :: Set String, ?hyps :: Hyps f (γ'::>()))
+       => String
+       -> Weakening γ' γ
+       -> Var (γ'::>())
+       -> f γ' TYPE
+       -> f (γ'::>()) TYPE
+       -> TypeView f m γ
 
 -- | This datastructure represents the ways a canonical LF term can be viewed.
 --   A term is either a term constant applied to a sequence of arguments; a free
 --   variable applied to a sequence of arguments; a unification variable applied
---   to a sequence of arguments; or a λ term.  In the binder case,
---   a continuation is provided that allows access to the subterm.
-data TermView f m γ
- = VConst (LFConst f) [f γ TERM]
- | VVar (Var γ) [f γ TERM]
- | VUVar (LFUVar f) [f γ TERM]
- | VLam String
-         (forall x.
-           (forall   γ'. (WFContext γ', ?nms :: Set String, ?hyps :: Hyps f (γ'::>()))
-                      => Weakening γ' γ
-                      -> Var (γ'::> ())
-                      -> f γ' TYPE
-                      -> f (γ'::> ()) TERM
-                      -> x)
-           -> x)
+--   to a sequence of arguments; or a λ term.
+data TermView f m γ where
+ VConst :: LFConst f -> [f γ TERM] -> TermView f m γ
+ VVar   :: Var γ -> [f γ TERM] -> TermView f m γ
+ VUVar  :: LFUVar f -> [f γ TERM] -> TermView f m γ
+ VLam   :: forall f m γ γ'
+         . (WFContext γ', ?nms :: Set String, ?hyps :: Hyps f (γ' ::> ()))
+        => String
+        -> Weakening γ' γ
+        -> Var (γ'::> ())
+        -> f γ' TYPE
+        -> f (γ'::> ()) TERM
+        -> TermView f m γ
 
 -- | This datastructure represents the ways an LF constraint can be viewed.
 --   A constraint is either the failure state; a conjunction of constraints;
 --   a unification goal; a ∀ quantifier; or a ∃ quantifier.  In the binder cases,
 --   continuations are provided that allow access to the subterms.
-data ConstraintView f m γ
- = VFail
- | VAnd [f γ CON]
- | VUnify (f γ TERM) (f γ TERM)
- | VForall String
-         (forall x.
-           (forall   γ'. (WFContext γ', ?nms :: Set String, ?hyps :: Hyps f (γ'::>()))
-                      => Weakening γ' γ
-                      -> Var (γ'::> ())
-                      -> f γ' TYPE
-                      -> f (γ'::> ()) CON
-                      -> x)
-           -> x)
- | VExists String
-         (forall x.
-           (forall   γ'. (WFContext γ', ?nms :: Set String, ?hyps :: Hyps f (γ'::>()))
-                      => Weakening γ' γ
-                      -> Var (γ'::> ())
-                      -> f γ' TYPE
-                      -> f (γ'::> ()) CON
-                      -> x)
-           -> x)
+data ConstraintView f m γ where
+ VFail :: ConstraintView f m γ
+ VAnd  :: [f γ CON] -> ConstraintView f m γ
+ VUnify :: f γ TERM -> f γ TERM -> ConstraintView f m γ
+ VForall :: forall f m γ γ'
+          . (WFContext γ', ?nms :: Set String, ?hyps :: Hyps f (γ'::>()))
+         => String
+         -> Weakening γ' γ
+         -> Var (γ'::> ())
+         -> f γ' TYPE
+         -> f (γ'::> ()) CON
+         -> ConstraintView f m γ
+ VExists :: forall f m γ γ'
+          . (WFContext γ', ?nms :: Set String, ?hyps :: Hyps f (γ'::>()))
+         => String
+         -> Weakening γ' γ
+         -> Var (γ'::> ())
+         -> f γ' TYPE
+         -> f (γ'::> ()) CON
+         -> ConstraintView f m γ
 
 
 -- | This datastructure represents the ways a canonical LF term can be viewed.
 --   A term is either a goal (consisting of a term and constraints) or is
 --   a Σ binder. In the binder case,
 --   a continuation is provided that allows access to the subterm.
-data GoalView f m γ
- = VGoal (f γ TERM) (f γ CON)
- | VSigma (forall x.
-           (forall   γ'. (WFContext γ', ?nms :: Set String, ?hyps :: Hyps f (γ'::>()))
-                      => Weakening γ' γ
-                      -> String
-                      -> Var (γ'::>())
-                      -> f γ' TYPE
-                      -> f (γ'::>()) GOAL
-                      -> x)
-           -> x)
-
+data GoalView f m γ where
+ VGoal :: f γ TERM -> f γ CON -> GoalView f m γ
+ VSigma  :: forall f m γ γ'
+          . (WFContext γ', ?nms :: Set String, ?hyps :: Hyps f (γ'::>()))
+         => String
+         -> Weakening γ' γ
+         -> Var (γ'::> ())
+         -> f γ' TYPE
+         -> f (γ'::> ()) GOAL
+         -> GoalView f m γ
 
 class (Ord (LFTypeConst f), Ord (LFConst f), Ord (LFUVar f),
        Pretty (LFTypeConst f), Pretty (LFConst f), Pretty (LFUVar f),

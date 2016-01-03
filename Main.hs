@@ -126,6 +126,7 @@ sig = buildSignature
   , "F" :. tm
   ]
 
+
 tp :: WFContext γ => M (LF γ TYPE)
 tp = tyConst "tp"
 
@@ -137,7 +138,6 @@ nat = tmConst "nat"
 
 arrow :: WFContext γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM)
 arrow x y = tmConst "arrow" @@ x @@ y
-
 
 tm :: WFContext γ => M (LF γ TYPE)
 tm = tyConst "tm"
@@ -156,9 +156,9 @@ app :: WFContext γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM)
 app x y = tmConst "app" @@ x @@ y
 
 lam :: WFContext γ
-    => String
-    -> (forall b. IsBoundVar b => Var (γ::>b) -> M (LF (γ::>b) TERM))
-    -> M (LF γ TERM)
+   => String
+   -> (forall b. IsBoundVar b => Var (γ::>b) -> M (LF (γ::>b) TERM))
+   -> M (LF γ TERM)
 lam nm f = tmConst "lam" @@ (λ nm tm f)
 
 nat_elim :: WFContext γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM)
@@ -205,6 +205,8 @@ typing2 = mkTerm sig $
             )
       )
 
+pattern VarP v <-
+  (termView -> VVar v [])
 pattern AppP m1 m2 <-
   (termView -> VConst "app" [m1, m2])
 pattern LamP m <-
@@ -232,7 +234,7 @@ tc :: ( WFContext γ, ?soln :: LFSoln LF
    -> LF γ TERM
    -> StateT [LF E CON] M (LF E TERM)
 
-tc sub (termView -> VVar v []) =
+tc sub (VarP v) =
   lift (hsubst sub =<< var v)
 
 tc _ ZeroP =
@@ -244,7 +246,7 @@ tc sub (SucP n) = do
      unify (return t) nat
   return t
 
-tc sub (LamP (termView -> VLam _nm k)) = k $ \w _v _t m -> do
+tc sub (LamP (termView -> VLam _nm w _v _t m)) = do
   t1 <- lift (uvar =<< freshUVar =<< tp)
   let sub' = SubstApply (weakSubst w sub)
                         (\_ -> return $ liftClosed t1)
@@ -269,6 +271,12 @@ tc sub (NatElimP z s n) = do
      unify (return tyn) nat
   return tyz
 
+tc _sub m = do
+  doc <- lift $ ppLF TopPrec m
+  fail $ unlines ["Typechecking failed, unrecognized term:"
+                 , show (indent 2 doc)
+                 ]
+
 
 runTC :: LF E TERM -> M (LF E GOAL)
 runTC tm = withCurrentSolution $ inEmptyCtx $ do
@@ -279,6 +287,7 @@ runTC tm = withCurrentSolution $ inEmptyCtx $ do
   ty' <- runChangeT $ instantiate ty
   goal (return ty') (return cs')
 
+{-
 typecheck :: forall γ γ'
            . (?nms :: Set String, ?hyps :: H γ, ?hyps' :: H γ'
              , WFContext γ', WFContext γ, ?soln :: LFSoln LF)
@@ -297,7 +306,7 @@ typecheck sub (SucP n) = do
    underGoal' g $ \ty c ->
      goal nat (conj [return c, unify (return ty) nat])
 
-typecheck sub (LamP (termView -> VLam nm k)) =
+typecheck sub (LamP fn) (termView -> VLam nm k)) =
   sigma ("t_"++nm) tp $ \(t :: Var (γ'::>b)) -> do
     (g :: LF (γ'::>b) GOAL)
        <- k $ \w _v _a m -> do
@@ -343,6 +352,7 @@ typecheck sub (NatElimP z s n) = do
                      , return $ wk3 $ wk2 cz
                      , return $ wk3 $ cs
                      , return cn])
+-}
 
 
 -- CBV reduction to head-normal form
@@ -366,8 +376,7 @@ eval tm@(AppP m1 m2) = do
         eval =<< Changed (app m1' (return m2))
 
 -- evaluation under lambdas
-eval tm@(LamP (termView -> VLam nm k)) =
-  k $ \wk _var tp body -> do
+eval tm@(LamP (termView -> VLam nm wk _var tp body)) = do
     case eval body of
       Changed body' -> do
         Changed (tmConst "lam" @@ (weakening wk <$> mkLam nm (return tp) body'))
@@ -407,8 +416,8 @@ composeN =
 
 testTerm :: LF E TERM
 testTerm =
-  mkTerm sig $ add `app` three `app` five
-  --mkTerm sig $ composeN `app` (lam "q" $ \q -> tmConst "F" `app` var q) `app` five `app` tt
+  --mkTerm sig $ add `app` three `app` five
+  mkTerm sig $ composeN `app` (lam "q" $ \q -> tmConst "F" `app` var q) `app` three --`app` tt
 
 
 evalTerm :: LF E TERM
@@ -425,11 +434,9 @@ main = inEmptyCtx $ do
    putStrLn ""
 -}
 
-   let ?hyps' = ?hyps 
    let x :: LF E GOAL
        x = runM sig $ (runTC =<< composeN)
        --x = runM sig $ (runTC =<< add)
    displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec x
    putStrLn ""
-   --displayIO stdout $ renderSmart 0.7 80 $ runM sig $ (ppLF TopPrec =<< inferType x)
-   --putStrLn ""
+

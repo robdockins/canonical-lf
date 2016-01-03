@@ -61,6 +61,7 @@ module Lang.LF
   -- * Printing terms
 , ppLF
 , Prec(..)
+, displayLF
 
   -- * Term Construction
 , weaken
@@ -94,7 +95,6 @@ module Lang.LF
 , solve
 , instantiate
 {-
-
 , dumpContext
 -}
 ) where
@@ -102,5 +102,6 @@ module Lang.LF
 import Lang.LF.Internal.Build
 import Lang.LF.Internal.Hyps
 import Lang.LF.Internal.Model
+import Lang.LF.Internal.Print
 import Lang.LF.Internal.Subst
 import Lang.LF.Internal.Typecheck

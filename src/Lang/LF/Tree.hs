@@ -118,8 +118,8 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
 
   freeVar = freeVarLF
 
-  kindView = kindViewLF id
-  typeView = typeViewLF id
+  kindView = kindViewLF WeakRefl 
+  typeView = typeViewLF WeakRefl
   termView = termViewLF WeakRefl id
   goalView = goalViewLF WeakRefl
   constraintView = constraintViewLF WeakRefl
@@ -170,8 +170,8 @@ infixr 0 ::.
 infixr 0 :.
 
 data SigDecl a c
-  = a ::. (M a c (LFTree a c E KIND))
-  | c :. (M a c (LFTree a c E TYPE))
+  = a ::. M a c (LFTree a c E KIND)
+  | c :.  M a c (LFTree a c E TYPE)
 
 emptySig :: Signature a c
 emptySig = Sig Map.empty Map.empty
