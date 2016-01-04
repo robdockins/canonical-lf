@@ -221,12 +221,68 @@ pattern ArrowP t1 t2 <-
   (termView -> VConst "arrow" [t1,t2])
 
 
-addConstraint 
+addConstraint
    :: M (LF E CON)
    -> StateT [LF E CON] M ()
 addConstraint c = do
    x <- lift c
    modify (x:)
+
+
+cps :: ( WFContext γ, ?soln :: LFSoln LF
+      , ?hyps :: H γ, ?nms :: Set String)
+    => LF γ TERM
+    -> M (LF γ TERM)
+
+cps (LamP body) =
+  λ "klam" (tm ==> tm) $ \k -> (var k) @@
+     (lam "x" $ \x ->
+       lam "k" $ \k -> do
+         tm' <- tm
+         extendCtx "klam" QLam tm' $
+           extendCtx "x" QLam (weaken tm') $
+           extendCtx "k" QLam (weaken $ weaken tm') $
+           (cps =<< ((return $ weaken $ weaken $ weaken body) @@
+             (weaken <$> var x))) @@
+             (λ "m" tm $ \m -> app (weaken <$> var k) (var m)))
+
+cps (AppP x y) =
+  λ "k" (tm ==> tm) $ \k -> do
+    tm' <- tm
+    extendCtx "k" QLam tm' $
+      cps (weaken x) @@ (λ "m" tm $ \m ->
+        extendCtx "m" QLam (weaken tm') $
+          cps (weaken $ weaken $ y) @@ (λ "n" tm $ \n ->
+            (weaken <$> var m) `app`
+            (var n) `app`
+            (lam "q" $ \q -> (weaken . weaken . weaken <$> var k) @@ var q)))
+
+-- cps (NatElimP z s n) = do
+--   z' <- cps z
+--   s' <- cps s
+--   n' <- cps n
+--   λ "knat" (tm ==> tm) $ \k ->
+--     (return $ weaken n') @@ (λ "nv" tm $ \nv ->
+--     (return $ weaken $ weaken s') @@ (λ "sv" tm $ \_sv ->
+--     (return $ weaken $ weaken $ weaken z') @@ (λ "zv" tm $ \zv ->
+--       nat_elim
+--          (lam "a" $ \a -> (weaken . weaken . weaken . weaken <$> var k) @@ var a)
+--          tt
+--          -- (lam "a" $ \a -> ???)
+--          (weaken . weaken <$> var nv)
+--         `app`
+--         (var zv)
+--       )))
+
+cps (SucP x) =
+  λ "k" (tm ==> tm) $ \k -> do
+    tm' <- tm
+    extendCtx "k" QLam tm' $
+      cps (weaken x) @@ (λ "n" tm $ \n -> (weaken <$> var k) @@ suc (var n))
+
+cps x =
+  λ "k" (tm ==> tm) $ \k ->
+    var k @@ (return $ weaken x)
 
 tc :: ( WFContext γ, ?soln :: LFSoln LF
       , ?hyps :: H γ, ?nms :: Set String)
@@ -283,7 +339,7 @@ runTC tm = withCurrentSolution $ inEmptyCtx $ do
   (ty, cs) <- flip runStateT [] $ tc SubstRefl tm
   (cs', soln) <- solve =<< conj (map return cs)
   Debug.trace (show soln) $ commitSolution soln
-  let ?soln = soln 
+  let ?soln = soln
   ty' <- runChangeT $ instantiate ty
   goal (return ty') (return cs')
 
@@ -294,7 +350,7 @@ typecheck :: forall γ γ'
           => Subst M LF γ γ'
           -> LF γ TERM
           -> M (LF γ' GOAL)
-          
+
 typecheck sub (termView -> VVar v []) =
    goal (hsubst sub =<< var v) cTrue
 
@@ -344,7 +400,7 @@ typecheck sub (NatElimP z s n) = do
     underGoal (weaken gz) $ \wk1 tyz cz ->
       underGoal (wk1 $ weaken gs) $ \wk2 tys cs ->
         underGoal (wk2 $ wk1 $ weaken gn) $ \wk3 tyn cn -> do
-          t' <- wk3 . wk2 . wk1 <$> var t 
+          t' <- wk3 . wk2 . wk1 <$> var t
           goal (return t')
                (conj [ unify (return $ tyn) nat
                      , unify (return $ wk3 $ wk2 $ tyz) (return t')
@@ -416,27 +472,39 @@ composeN =
 
 testTerm :: LF E TERM
 testTerm =
-  --mkTerm sig $ add `app` three `app` five
-  mkTerm sig $ composeN `app` (lam "q" $ \q -> tmConst "F" `app` var q) `app` three --`app` tt
+  mkTerm sig $ add `app` three `app` five
+  --mkTerm sig $ composeN `app` (lam "q" $ \q -> tmConst "F" `app` var q) `app` three --`app` tt
 
 
 evalTerm :: LF E TERM
 evalTerm = inEmptyCtx $
    mkTerm sig $ runChangeT $ eval testTerm
 
+cpsTerm :: LF E TERM
+cpsTerm = inEmptyCtx $
+   mkTerm sig $ do
+      --x <- cps testTerm @@ (λ "z" tm $ \z -> var z)
+      x <- lam "k" $ \k -> do
+              tm' <- tm
+              extendCtx "k" QLam tm' $
+                cps (weaken testTerm) @@
+                       (λ "m" tm $ \m -> app (weaken <$> var k) (var m))
+      return x
+      --runChangeT $ eval x
+
 main = inEmptyCtx $ do
-{-
    let x :: LF E TERM
-       x = evalTerm
+       x = cpsTerm
    displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec x
    putStrLn ""
    displayIO stdout $ renderSmart 0.7 80 $ runM sig $ (ppLF TopPrec =<< inferType x)
    putStrLn ""
--}
 
+
+{-
    let x :: LF E GOAL
        x = runM sig $ (runTC =<< composeN)
        --x = runM sig $ (runTC =<< add)
    displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec x
    putStrLn ""
-
+-}
