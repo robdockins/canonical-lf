@@ -124,6 +124,22 @@ sig = buildSignature
            step (nat_elim (var z) (var s) (suc (var n))) (app (var s) (nat_elim (var z) (var s) (var n)))
 
   , "F" :. tm
+
+  , "f" :. tm --   A -> B -> C
+  , "g" :. tm --   C -> B
+  , "h" :. tm --   A -> C
+
+  , "f'" :. tm --   A -> (B -> C)#
+               --   A -> ((B -> C)* -> X) -> X
+               --   A -> ((B -> (C -> X) -> X) -> X) -> X
+
+  , "g'" :. tm --   C -> (B -> X) -> X
+  , "h'" :. tm --   A -> (C -> X) -> X
+
+  , "A" :. tp
+  , "B" :. tp
+  , "C" :. tp
+  , "X" :. tp
   ]
 
 
@@ -221,14 +237,6 @@ pattern ArrowP t1 t2 <-
   (termView -> VConst "arrow" [t1,t2])
 
 
-addConstraint
-   :: M (LF E CON)
-   -> StateT [LF E CON] M ()
-addConstraint c = do
-   x <- lift c
-   modify (x:)
-
-
 cps :: ( WFContext γ, ?soln :: LFSoln LF
       , ?hyps :: H γ, ?nms :: Set String)
     => LF γ TERM
@@ -238,8 +246,9 @@ cps (LamP body) =
   λ "klam" (tm ==> tm) $ \k -> (var k) @@
      (lam "x" $ \x ->
        lam "k" $ \k -> do
+         arr' <- (tm ==> tm)
          tm' <- tm
-         extendCtx "klam" QLam tm' $
+         extendCtx "klam" QLam arr' $
            extendCtx "x" QLam (weaken tm') $
            extendCtx "k" QLam (weaken $ weaken tm') $
            (cps =<< ((return $ weaken $ weaken $ weaken body) @@
@@ -248,10 +257,11 @@ cps (LamP body) =
 
 cps (AppP x y) =
   λ "k" (tm ==> tm) $ \k -> do
-    tm' <- tm
-    extendCtx "k" QLam tm' $
-      cps (weaken x) @@ (λ "m" tm $ \m ->
-        extendCtx "m" QLam (weaken tm') $
+    arr' <- (tm ==> tm)
+    extendCtx "k" QLam arr' $
+      cps (weaken x) @@ (λ "m" tm $ \m -> do
+        tm' <- tm
+        extendCtx "m" QLam tm' $
           cps (weaken $ weaken $ y) @@ (λ "n" tm $ \n ->
             (weaken <$> var m) `app`
             (var n) `app`
@@ -276,13 +286,35 @@ cps (AppP x y) =
 
 cps (SucP x) =
   λ "k" (tm ==> tm) $ \k -> do
-    tm' <- tm
-    extendCtx "k" QLam tm' $
+    arr' <- (tm ==> tm)
+    extendCtx "k" QLam arr' $
       cps (weaken x) @@ (λ "n" tm $ \n -> (weaken <$> var k) @@ suc (var n))
+
+cps (termView -> VConst "f" []) =
+  λ "k" (tm ==> tm) $ \k ->
+    var k @@ (liftClosed <$> tmConst "f'")
+
+cps (termView -> VConst "g" []) =
+  λ "k" (tm ==> tm) $ \k ->
+    var k @@ (liftClosed <$> tmConst "g'")
+
+cps (termView -> VConst "h" []) =
+  λ "k" (tm ==> tm) $ \k ->
+    var k @@ (liftClosed <$> tmConst "h'")
 
 cps x =
   λ "k" (tm ==> tm) $ \k ->
     var k @@ (return $ weaken x)
+
+
+
+
+addConstraint
+   :: M (LF E CON)
+   -> StateT [LF E CON] M ()
+addConstraint c = do
+   x <- lift c
+   modify (x:)
 
 tc :: ( WFContext γ, ?soln :: LFSoln LF
       , ?hyps :: H γ, ?nms :: Set String)
@@ -312,10 +344,10 @@ tc sub (LamP (termView -> VLam _nm w _v _t m)) = do
 tc sub (AppP m1 m2) = do
   tf    <- tc sub m1
   targ  <- tc sub m2
-  tbody <- lift (uvar =<< freshUVar =<< tp)
+  tres  <- lift (uvar =<< freshUVar =<< tp)
   addConstraint $
-     unify (return tf) (arrow (return targ) (return tbody))
-  return tbody
+     unify (return tf) (arrow (return targ) (return tres))
+  return tres
 
 tc sub (NatElimP z s n) = do
   tyz <- tc sub z
@@ -327,6 +359,30 @@ tc sub (NatElimP z s n) = do
      unify (return tyn) nat
   return tyz
 
+tc _ (termView -> VConst "f" []) = do
+  lift $ arrow (tmConst "A") (arrow (tmConst "B") (tmConst "C"))
+tc _ (termView -> VConst "g" []) = do
+  lift $ arrow (tmConst "C") (tmConst "B")
+tc _ (termView -> VConst "h" []) = do
+  lift $ arrow (tmConst "A") (tmConst "C")
+
+
+tc _ (termView -> VConst "f'" []) = do
+  tans  <- lift (uvar =<< freshUVar =<< tp)
+  lift $ arrow (tmConst "A")
+          (arrow (arrow (arrow (tmConst "B")
+                          (arrow (arrow (tmConst "C") (return tans)) (return tans)))
+                   (return tans)
+                )
+           (return tans))
+
+tc _ (termView -> VConst "g'" []) = do
+  tans  <- lift (uvar =<< freshUVar =<< tp)
+  lift $ arrow (tmConst "C") (arrow (arrow (tmConst "B") (return tans)) (return tans))
+tc _ (termView -> VConst "h'" []) = do
+  tans  <- lift (uvar =<< freshUVar =<< tp)
+  lift $ arrow (tmConst "A") (arrow (arrow (tmConst "C") (return tans)) (return tans))
+
 tc _sub m = do
   doc <- lift $ ppLF TopPrec m
   fail $ unlines ["Typechecking failed, unrecognized term:"
@@ -337,11 +393,14 @@ tc _sub m = do
 runTC :: LF E TERM -> M (LF E GOAL)
 runTC tm = withCurrentSolution $ inEmptyCtx $ do
   (ty, cs) <- flip runStateT [] $ tc SubstRefl tm
+--  goal (return ty) (conj (map return cs))
+
   (cs', soln) <- solve =<< conj (map return cs)
   Debug.trace (show soln) $ commitSolution soln
   let ?soln = soln
   ty' <- runChangeT $ instantiate ty
   goal (return ty') (return cs')
+
 
 {-
 typecheck :: forall γ γ'
@@ -470,9 +529,24 @@ composeN =
                     var f `app` (var g `app` var q))
                (var n)
 
+f :: WFContext γ => M (LF γ TERM)
+f = liftClosed <$> tmConst "f"
+
+g :: WFContext γ => M (LF γ TERM)
+g = liftClosed <$> tmConst "g"
+
+h :: WFContext γ => M (LF γ TERM)
+h = liftClosed <$> tmConst "h"
+
 testTerm :: LF E TERM
 testTerm =
-  mkTerm sig $ add `app` three `app` five
+  --mkTerm sig $
+  --   lam "x" $ \x -> g `app` (h `app` var x)
+
+  --mkTerm sig $
+  --   lam "x" $ \x -> (f `app` var x) `app` (g `app` (h `app` var x))
+
+  mkTerm sig $ add `app` three
   --mkTerm sig $ composeN `app` (lam "q" $ \q -> tmConst "F" `app` var q) `app` three --`app` tt
 
 
@@ -483,14 +557,14 @@ evalTerm = inEmptyCtx $
 cpsTerm :: LF E TERM
 cpsTerm = inEmptyCtx $
    mkTerm sig $ do
-      --x <- cps testTerm @@ (λ "z" tm $ \z -> var z)
-      x <- lam "k" $ \k -> do
-              tm' <- tm
-              extendCtx "k" QLam tm' $
-                cps (weaken testTerm) @@
-                       (λ "m" tm $ \m -> app (weaken <$> var k) (var m))
-      return x
-      --runChangeT $ eval x
+      x <- cps testTerm @@ (λ "z" tm $ \z -> var z)
+      -- x <- lam "k" $ \k -> do
+      --         tm' <- tm
+      --         extendCtx "k" QLam tm' $
+      --           cps (weaken testTerm) @@
+      --                  (λ "m" tm $ \m -> app (weaken <$> var k) (var m))
+      --return x
+      runChangeT $ eval x
 
 main = inEmptyCtx $ do
    let x :: LF E TERM
@@ -500,11 +574,9 @@ main = inEmptyCtx $ do
    displayIO stdout $ renderSmart 0.7 80 $ runM sig $ (ppLF TopPrec =<< inferType x)
    putStrLn ""
 
-
-{-
-   let x :: LF E GOAL
-       x = runM sig $ (runTC =<< composeN)
-       --x = runM sig $ (runTC =<< add)
-   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec x
+   let g :: LF E GOAL
+       g = runM sig $ runTC x
+       --g = runM sig $ (runTC =<< composeN)
+       --g = runM sig $ (runTC =<< add)
+   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec g
    putStrLn ""
--}

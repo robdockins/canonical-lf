@@ -69,6 +69,6 @@ extendCtx :: (?nms :: Set String, ?hyps :: Hyps f γ)
           -> x
 extendCtx nm q a f =
   let nm' = freshName nm in
-  let ?nms = Set.insert nm ?nms in
+  let ?nms = Set.insert nm' ?nms in
   let ?hyps = extendHyps ?hyps nm' q a in
   f

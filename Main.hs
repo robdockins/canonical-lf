@@ -113,6 +113,7 @@ sig = buildSignature
                 (app (var a) (var a) (var s) (nat_elim (var a) (var z) (var s) (var n)))
 
   , "F" :. tm (arrow unit unit)
+
   ]
 
 
@@ -188,6 +189,92 @@ addConstraint c = do
    modify (x:)
 
 
+cps_type :: ( WFContext γ, ?soln :: LFSoln LF
+       , ?nms :: Set String, ?hyps :: H γ
+       )
+      => LF E TERM
+      -> LF γ TERM
+      -> M (LF γ TERM)
+cps_type ans_ty (ArrowP t1 t2) = do
+  t1' <- cps_type ans_ty t1
+  t2' <- cps_type ans_ty t2
+  arrow (return t1') (arrow (arrow (return t2') (return (liftClosed ans_ty))) (return (liftClosed ans_ty)))
+
+cps_type _ x = return x
+
+-- Given a term compute a CPS conversion of it.
+cps, docps :: ( WFContext γ, ?soln :: LFSoln LF
+       , ?nms :: Set String, ?hyps :: H γ
+       )
+       => LF E TERM
+       -> LF γ TERM
+       -> LF γ TERM
+       -> M (LF γ TERM)
+cps ans_ty ty m = do
+  x <- docps ans_ty ty m
+  str_m <- displayLF m
+  str <- displayLF x
+  Debug.trace (unlines ["Before:",str_m,"After:",str]) $ do
+    _ <- inferType x
+    return x
+
+docps ans_ty ty (LamP a b body) = do
+  ty' <- cps_type ans_ty ty
+  k_arg <- tm (return ty') ==> tm (return $ liftClosed ans_ty)
+  λ "k" (return k_arg)
+    $ \k0 -> var k0 @@
+    (extendCtx "k" QLam k_arg $
+    (lam (return $ weaken a)
+         (arrow (arrow (return $ weaken b) (return $ liftClosed $ ans_ty)) (return $ liftClosed $ ans_ty))
+      "x" $ \x -> do
+      x_arg <- tm (return $ weaken a)
+      extendCtx "x" QLam x_arg $
+       lam (arrow (return $ weaken $ weaken $ b) (return $ liftClosed $ ans_ty))
+        (return $ liftClosed $ ans_ty)
+        "k" $ \k -> do
+          k_arg <- tm (arrow (return $ weaken $ weaken $ b) (return $ liftClosed $ ans_ty))
+          extendCtx "k" QLam k_arg $
+           (cps ans_ty (weaken $ weaken $ weaken b) =<< ((return $ weaken $ weaken $ weaken body) @@ (weaken <$> var x)))
+           @@
+           (λ "m" (tm (return $ weaken $ weaken $ weaken b)) $ \m -> 
+             app (return $ weaken $ weaken $ weaken $ weaken b) (return $ liftClosed $ ans_ty) (weaken <$> var k) (var m))))
+
+docps ans_ty _ (AppP a b x y) = do
+  a' <- cps_type ans_ty a
+  b' <- cps_type ans_ty b  
+  k_arg <- (tm (return b) ==> tm (return $ liftClosed ans_ty))
+  λ "k" (return k_arg) $ \k -> 
+   extendCtx "k" QLam k_arg $ do
+     arr <- arrow (return $ weaken a) (return $ weaken b)
+     (cps ans_ty arr (weaken x))
+      @@ (do
+       arr' <- cps_type ans_ty arr
+       m_arg <- tm (return arr')
+       λ "m" (return m_arg) $ \m ->
+         extendCtx "m" QLam m_arg $
+         (cps ans_ty (weaken $ weaken a) (weaken $ weaken y)) @@ (do
+           n_arg <- tm (return $ weaken $ weaken a)
+           λ "n" (return n_arg) $ \n ->
+             extendCtx "n" QLam n_arg $
+               app (arrow (return $ weaken $ weaken $ weaken b') (return $ liftClosed ans_ty))
+                   (return $ liftClosed ans_ty)
+                   (app (return $ weaken $ weaken $ weaken a')
+                        (arrow (arrow (return $ weaken $ weaken $ weaken b') (return $ liftClosed ans_ty)) (return $ liftClosed ans_ty))
+                        (weaken <$> var m) (var n))
+                   (lam (return $ weaken $ weaken $ weaken b') (return $ liftClosed ans_ty)
+                      "q" $ \q -> (weaken <$> weaken <$> weaken <$> var k) @@ var q)))
+
+docps ans_ty n_ty (SucP n) =
+  λ "k" (tm nat ==> tm (return $ liftClosed ans_ty)) $ \k -> do
+    t <- tm nat
+    extendCtx "k" QLam t $
+      (cps ans_ty (weaken n_ty) (weaken n)) @@ (λ "q" (tm nat) $ \q -> (weaken <$> var k) @@ (suc (var q)))
+
+docps ans_ty ty x =
+  λ "k" (tm (return $ ty) ==> tm (return $ liftClosed ans_ty)) $ \k ->
+     var k @@ return (weaken x)
+
+
 -- CBV reduction to head-normal form
 eval :: (?nms :: Set String, ?hyps :: H γ, WFContext γ, ?soln :: LFSoln LF)
      => LF γ TERM
@@ -254,23 +341,37 @@ composeN a = do
 
 testTerm :: LF E TERM
 testTerm =
-  --mkTerm sig $ add `app` three `app` five
   mkTerm sig $
-        app unit unit
-          (app nat (arrow unit unit)
-              (app (arrow unit unit) (arrow nat (arrow unit unit))
-                   (composeN unit)
-                   (lam unit unit "q" $ \q -> app unit unit (tmConst "F") (var q)))
-              three)
-          tt
+    app nat nat
+      (app nat (arrow nat nat)
+           add
+           three)
+      five
+  -- mkTerm sig $
+  --       app unit unit
+  --         (app nat (arrow unit unit)
+  --             (app (arrow unit unit) (arrow nat (arrow unit unit))
+  --                  (composeN unit)
+  --                  (lam unit unit "q" $ \q -> app unit unit (tmConst "F") (var q)))
+  --             three)
+  --         tt
 
 evalTerm :: LF E TERM
 evalTerm = inEmptyCtx $
    mkTerm sig $ runChangeT $ eval testTerm
 
+cpsTerm :: LF E TERM
+cpsTerm = inEmptyCtx $
+   mkTerm sig $ do
+      u <- unit
+      t <- nat
+      x <- (cps u t testTerm) @@ (λ "q" (tm nat) $ \_q -> tt)
+      str <- displayLF x
+      Debug.trace (unlines ["Final:", str]) $ return x
+
 main = inEmptyCtx $ do
    let x :: LF E TERM
-       x = evalTerm
+       x = cpsTerm
    displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec x
    putStrLn ""
    displayIO stdout $ renderSmart 0.7 80 $ runM sig $ (ppLF TopPrec =<< inferType x)
