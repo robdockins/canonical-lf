@@ -393,81 +393,13 @@ tc _sub m = do
 runTC :: LF E TERM -> M (LF E GOAL)
 runTC tm = withCurrentSolution $ inEmptyCtx $ do
   (ty, cs) <- flip runStateT [] $ tc SubstRefl tm
---  goal (return ty) (conj (map return cs))
-
   (cs', soln) <- solve =<< conj (map return cs)
-  Debug.trace (show soln) $ commitSolution soln
+  commitSolution soln
   let ?soln = soln
   ty' <- runChangeT $ instantiate ty
   goal (return ty') (return cs')
 
 
-{-
-typecheck :: forall γ γ'
-           . (?nms :: Set String, ?hyps :: H γ, ?hyps' :: H γ'
-             , WFContext γ', WFContext γ, ?soln :: LFSoln LF)
-          => Subst M LF γ γ'
-          -> LF γ TERM
-          -> M (LF γ' GOAL)
-
-typecheck sub (termView -> VVar v []) =
-   goal (hsubst sub =<< var v) cTrue
-
-typecheck _ ZeroP = goal nat cTrue
-
-typecheck sub (SucP n) = do
-   g <- typecheck sub n
-   let ?hyps = ?hyps'
-   underGoal' g $ \ty c ->
-     goal nat (conj [return c, unify (return ty) nat])
-
-typecheck sub (LamP fn) (termView -> VLam nm k)) =
-  sigma ("t_"++nm) tp $ \(t :: Var (γ'::>b)) -> do
-    (g :: LF (γ'::>b) GOAL)
-       <- k $ \w _v _a m -> do
-                 tp' <- tp
-                 let ?hyps' = extendHyps ?hyps' ("t_"++nm) QSigma tp'
-                 typecheck (SubstApply (SubstWeak (SubstSkip (weakSubst w sub)))
-                                       (\_ -> var t))
-                             m
-    tp' <- tp
-    let ?hyps = extendHyps ?hyps' "t" QSigma tp'
-    underGoal g $ \wk xty c ->
-      goal (arrow (wk <$> (var t)) (return xty)) (return c)
-
-typecheck sub (AppP x y) = do
-  g1 <- typecheck sub x
-  g2 <- typecheck sub y
-  let ?hyps = ?hyps'
-  underGoal g1 $ \wk1 ty1 c1 -> do
-    underGoal (wk1 g2) $ \wk2 ty2 c2 -> do
-      sigma "tbody" tp $ \tbody ->
-         goal (var tbody)
-              (conj [ return $ weaken $ wk2 c1
-                    , return $ weaken $ c2
-                    , unify (arrow (return $ weaken ty2) (var tbody))
-                            (return $ weaken $ wk2 $ ty1)
-                    ])
-
-typecheck sub (NatElimP z s n) = do
-  gz <- typecheck sub z
-  gs <- typecheck sub s
-  gn <- typecheck sub n
-  sigma "t" tp $ \t -> do
-    tp' <- tp
-    let ?hyps = extendHyps ?hyps' "t" QSigma tp'
-    underGoal (weaken gz) $ \wk1 tyz cz ->
-      underGoal (wk1 $ weaken gs) $ \wk2 tys cs ->
-        underGoal (wk2 $ wk1 $ weaken gn) $ \wk3 tyn cn -> do
-          t' <- wk3 . wk2 . wk1 <$> var t
-          goal (return t')
-               (conj [ unify (return $ tyn) nat
-                     , unify (return $ wk3 $ wk2 $ tyz) (return t')
-                     , unify (return $ wk3 $ tys) (arrow (return t') (return t'))
-                     , return $ wk3 $ wk2 cz
-                     , return $ wk3 $ cs
-                     , return cn])
--}
 
 
 -- CBV reduction to head-normal form
