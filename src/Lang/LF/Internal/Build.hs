@@ -53,33 +53,51 @@ var v = autoweaken <$> (foldLF . ATerm =<< var0 v id)
 uvar :: LFModel f m => LFUVar f -> m (f E TERM)
 uvar u = foldLF . ATerm =<< foldLF (UVar u)
 
-λ :: (LFModel f m)
+λ :: (LFModel f m
+   , WFContext γ
+   , ?nms :: Set String
+   , ?hyps :: Hyps f γ)
   => String
   -> m (f γ TYPE)
-  -> (forall b. IsBoundVar b => Var (γ ::> b) -> m (f (γ::>b) TERM))
+  -> (forall b.
+         (IsBoundVar b
+         , WFContext (γ ::> b)
+         , ?nms :: Set String
+         , ?hyps :: Hyps f (γ::>b)
+         )
+         => Var (γ ::> b) -> m (f (γ::>b) TERM))
   -> m (f γ TERM)
 λ nm tp f = do
   tp' <- tp
-  m   <- f (B ())
+  m   <- extendCtx nm QLam tp' $ f (B ())
   foldLF (Lam nm tp' m)
 
 class LFPi (s::SORT) where
-  pi :: LFModel f m
+  pi :: ( LFModel f m
+        , WFContext γ
+        , ?nms :: Set String
+        , ?hyps :: Hyps f γ
+        )
      => String
      -> m (f γ TYPE)
-     -> (forall b. IsBoundVar b => Var (γ::>b) -> m (f (γ::>b) s))
+     -> (forall b. ( IsBoundVar b
+                   , WFContext (γ ::> b)
+                   , ?nms :: Set String
+                   , ?hyps :: Hyps f (γ::>b)
+                   )
+          => Var (γ::>b) -> m (f (γ::>b) s))
      -> m (f γ s)
 
 instance LFPi KIND where
   pi nm tp f = do
     tp' <- tp
-    k   <- f (B ())
+    k   <- extendCtx nm QPi tp' $ f (B ())
     foldLF (KPi nm tp' k)
 
 instance LFPi TYPE where
   pi nm tp f = do
     tp' <- tp
-    a   <- f (B ())
+    a   <- extendCtx nm QPi tp' $ f (B ())
     foldLF (TyPi nm tp' a)
 
 class LFFunc (s::SORT) where

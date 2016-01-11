@@ -215,9 +215,11 @@ addTermConstant sig nm m =
            return sig{ sigTerms = Map.insert nm x (sigTerms sig) }
 
 buildSignature :: (Ord a, Ord c, Pretty a, Pretty c)
-               => [SigDecl a c]
+               => ((?hyps :: Hyps (LFTree a c) E, ?nms :: Set.Set String)
+                    => [SigDecl a c])
                -> Signature a c
-buildSignature = either error id . runExcept . foldM f emptySig
+buildSignature decls =
+   either error id $ runExcept $ foldM f emptySig $ inEmptyCtx decls
  where f sig (a ::. x) = addTypeConstant sig a x
        f sig (c :. x)  = addTermConstant sig c x
 
@@ -230,9 +232,13 @@ runM sig m =
 
 mkTerm :: (Ord a, Ord c, Pretty a, Pretty c)
        => Signature a c
-       -> ((?soln :: LFSoln (LFTree a c)) => M a c (LFTree a c E TERM))
+       -> (( ?soln :: LFSoln (LFTree a c)
+           , ?hyps :: Hyps (LFTree a c) E
+           , ?nms  :: Set.Set String
+           )
+            => M a c (LFTree a c E TERM))
        -> LFTree a c E TERM
-mkTerm sig m = runM sig $ do
+mkTerm sig m = runM sig $ inEmptyCtx $ do
     let ?nms = Set.empty
     let ?hyps = HNil
     let ?soln = Map.empty

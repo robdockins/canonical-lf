@@ -171,9 +171,16 @@ infixl 5 `app`
 app :: WFContext γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM)
 app x y = tmConst "app" @@ x @@ y
 
-lam :: WFContext γ
+lam :: (WFContext γ
+       , ?nms :: Set String
+       , ?hyps :: Hyps LF γ
+       )
    => String
-   -> (forall b. IsBoundVar b => Var (γ::>b) -> M (LF (γ::>b) TERM))
+   -> (forall b. ( IsBoundVar b
+                 , ?nms :: Set String
+                 , ?hyps :: Hyps LF (γ ::> b)
+                 )
+         => Var (γ::>b) -> M (LF (γ::>b) TERM))
    -> M (LF γ TERM)
 lam nm f = tmConst "lam" @@ (λ nm tm f)
 
@@ -245,50 +252,22 @@ cps :: ( WFContext γ, ?soln :: LFSoln LF
 cps (LamP body) =
   λ "klam" (tm ==> tm) $ \k -> (var k) @@
      (lam "x" $ \x ->
-       lam "k" $ \k -> do
-         arr' <- (tm ==> tm)
-         tm' <- tm
-         extendCtx "klam" QLam arr' $
-           extendCtx "x" QLam (weaken tm') $
-           extendCtx "k" QLam (weaken $ weaken tm') $
+       lam "k" $ \k ->
            (cps =<< ((return $ weaken $ weaken $ weaken body) @@
              (weaken <$> var x))) @@
              (λ "m" tm $ \m -> app (weaken <$> var k) (var m)))
 
 cps (AppP x y) =
-  λ "k" (tm ==> tm) $ \k -> do
-    arr' <- (tm ==> tm)
-    extendCtx "k" QLam arr' $
-      cps (weaken x) @@ (λ "m" tm $ \m -> do
-        tm' <- tm
-        extendCtx "m" QLam tm' $
-          cps (weaken $ weaken $ y) @@ (λ "n" tm $ \n ->
-            (weaken <$> var m) `app`
-            (var n) `app`
-            (lam "q" $ \q -> (weaken . weaken . weaken <$> var k) @@ var q)))
-
--- cps (NatElimP z s n) = do
---   z' <- cps z
---   s' <- cps s
---   n' <- cps n
---   λ "knat" (tm ==> tm) $ \k ->
---     (return $ weaken n') @@ (λ "nv" tm $ \nv ->
---     (return $ weaken $ weaken s') @@ (λ "sv" tm $ \_sv ->
---     (return $ weaken $ weaken $ weaken z') @@ (λ "zv" tm $ \zv ->
---       nat_elim
---          (lam "a" $ \a -> (weaken . weaken . weaken . weaken <$> var k) @@ var a)
---          tt
---          -- (lam "a" $ \a -> ???)
---          (weaken . weaken <$> var nv)
---         `app`
---         (var zv)
---       )))
+  λ "k" (tm ==> tm) $ \k ->
+      cps (weaken x) @@ (λ "m" tm $ \m ->
+        cps (weaken $ weaken $ y) @@ (λ "n" tm $ \n ->
+          (weaken <$> var m) `app`
+          (var n) `app`
+          (lam "q" $ \q -> (weaken . weaken . weaken <$> var k) @@ var q)))
 
 cps (SucP x) =
-  λ "k" (tm ==> tm) $ \k -> do
-    arr' <- (tm ==> tm)
-    extendCtx "k" QLam arr' $
-      cps (weaken x) @@ (λ "n" tm $ \n -> (weaken <$> var k) @@ suc (var n))
+  λ "k" (tm ==> tm) $ \k ->
+    cps (weaken x) @@ (λ "n" tm $ \n -> (weaken <$> var k) @@ suc (var n))
 
 cps (termView -> VConst "f" []) =
   λ "k" (tm ==> tm) $ \k ->
@@ -441,18 +420,19 @@ eval t = Unchanged t
 
 
 five :: M (LF E TERM)
-five = suc $ suc $ suc $ suc $ suc $ zero
+five = inEmptyCtx $ suc $ suc $ suc $ suc $ suc $ zero
 
 three :: M (LF E TERM)
-three = suc $ suc $ suc $ zero
+three = inEmptyCtx $ suc $ suc $ suc $ zero
 
 add :: M (LF E TERM)
-add = lam "x" $ \x ->
-      lam "y" $ \y ->
-        nat_elim (var x) (lam "n" $ \n -> suc (var n)) (var y)
+add = inEmptyCtx $
+  lam "x" $ \x ->
+  lam "y" $ \y ->
+    nat_elim (var x) (lam "n" $ \n -> suc (var n)) (var y)
 
 composeN :: M (LF E TERM)
-composeN =
+composeN = inEmptyCtx $
   lam "f" $ \f ->
     lam "n" $ \n ->
       nat_elim (lam "q" $ \q -> var q)
@@ -472,29 +452,22 @@ h = liftClosed <$> tmConst "h"
 
 testTerm :: LF E TERM
 testTerm =
-  --mkTerm sig $
-  --   lam "x" $ \x -> g `app` (h `app` var x)
+  mkTerm sig $
+     lam "x" $ \x -> g `app` (h `app` var x)
 
   --mkTerm sig $
   --   lam "x" $ \x -> (f `app` var x) `app` (g `app` (h `app` var x))
 
-  mkTerm sig $ add `app` three
+  --mkTerm sig $ add `app` three
   --mkTerm sig $ composeN `app` (lam "q" $ \q -> tmConst "F" `app` var q) `app` three --`app` tt
 
 
 evalTerm :: LF E TERM
-evalTerm = inEmptyCtx $
-   mkTerm sig $ runChangeT $ eval testTerm
+evalTerm = mkTerm sig $ runChangeT $ eval testTerm
 
 cpsTerm :: LF E TERM
-cpsTerm = inEmptyCtx $
-   mkTerm sig $ do
+cpsTerm = mkTerm sig $ do
       x <- cps testTerm @@ (λ "z" tm $ \z -> var z)
-      -- x <- lam "k" $ \k -> do
-      --         tm' <- tm
-      --         extendCtx "k" QLam tm' $
-      --           cps (weaken testTerm) @@
-      --                  (λ "m" tm $ \m -> app (weaken <$> var k) (var m))
       --return x
       runChangeT $ eval x
 

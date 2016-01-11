@@ -188,7 +188,7 @@ addConstraint c = do
    x <- lift c
    modify (x:)
 
-
+{-
 cps_type :: ( WFContext γ, ?soln :: LFSoln LF
        , ?nms :: Set String, ?hyps :: H γ
        )
@@ -273,6 +273,7 @@ docps ans_ty n_ty (SucP n) =
 docps ans_ty ty x =
   λ "k" (tm (return $ ty) ==> tm (return $ liftClosed ans_ty)) $ \k ->
      var k @@ return (weaken x)
+-}
 
 
 -- CBV reduction to head-normal form
