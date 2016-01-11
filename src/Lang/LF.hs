@@ -34,6 +34,7 @@ module Lang.LF
 , weakSubst
 , withCurrentSolution
 , commitSolution
+, lookupSubst
 
   -- * Term views
 , KindView(..)

@@ -24,6 +24,17 @@ weakening (WeakR w) = weaken . weakening w
 weakening (WeakL w) = weakening w . weaken
 weakening (WeakTrans w₁ w₂) = weakening w₂ . weakening w₁
 
+lookupSubst :: LFModel f m
+          => Var γ₁
+          -> Subst m f γ₁ γ₂
+          -> m (f γ₂ TERM)
+lookupSubst v SubstRefl = var v
+lookupSubst v (SubstWeak s) = lookupSubst (F v) s
+lookupSubst (B v) (SubstApply _ f) = f v
+lookupSubst (F v) (SubstApply s _) = lookupSubst v s
+lookupSubst (B v) (SubstSkip _) = aterm <$> var0 (B v) id
+lookupSubst (F v) (SubstSkip s) = weaken <$> lookupSubst v s
+
 strengthen :: (LFModel f m, ?soln :: LFSoln f)
            => f (γ::>b) s
            -> m (f γ s)

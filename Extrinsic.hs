@@ -302,7 +302,7 @@ tc :: ( WFContext γ, ?soln :: LFSoln LF
    -> StateT [LF E CON] M (LF E TERM)
 
 tc sub (VarP v) =
-  lift (hsubst sub =<< var v)
+  lift (lookupSubst v sub)
 
 tc _ ZeroP =
   lift nat
@@ -451,12 +451,10 @@ h :: WFContext γ => M (LF γ TERM)
 h = liftClosed <$> tmConst "h"
 
 testTerm :: LF E TERM
-testTerm =
-  mkTerm sig $
-     lam "x" $ \x -> g `app` (h `app` var x)
+testTerm = mkTerm sig $
+  lam "x" $ \x -> (f `app` var x) `app` (g `app` (h `app` var x))
 
-  --mkTerm sig $
-  --   lam "x" $ \x -> (f `app` var x) `app` (g `app` (h `app` var x))
+  --lam "x" $ \x -> g `app` (h `app` var x)
 
   --mkTerm sig $ add `app` three
   --mkTerm sig $ composeN `app` (lam "q" $ \q -> tmConst "F" `app` var q) `app` three --`app` tt
@@ -468,8 +466,8 @@ evalTerm = mkTerm sig $ runChangeT $ eval testTerm
 cpsTerm :: LF E TERM
 cpsTerm = mkTerm sig $ do
       x <- cps testTerm @@ (λ "z" tm $ \z -> var z)
-      --return x
-      runChangeT $ eval x
+      return x
+      --runChangeT $ eval x
 
 main = inEmptyCtx $ do
    let x :: LF E TERM
