@@ -15,15 +15,6 @@ weakSubst (WeakR w) = weakSubst w . SubstWeak
 weakSubst (WeakL w) = SubstWeak . weakSubst w
 weakSubst (WeakTrans w₁ w₂) = weakSubst w₁ . weakSubst w₂
 
-weakening :: LFModel f m
-          => Weakening γ γ'
-          -> f γ s
-          -> f γ' s
-weakening WeakRefl  = id
-weakening (WeakR w) = weaken . weakening w
-weakening (WeakL w) = weakening w . weaken
-weakening (WeakTrans w₁ w₂) = weakening w₂ . weakening w₁
-
 lookupSubst :: LFModel f m
           => Var γ₁
           -> Subst m f γ₁ γ₂

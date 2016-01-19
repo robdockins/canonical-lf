@@ -8,27 +8,35 @@ import Lang.LF.Internal.Model
 import Lang.LF.Internal.Hyps
 import Lang.LF.Internal.Solve
 
+weakening :: LFModel f m
+          => Weakening γ γ'
+          -> f γ s
+          -> f γ' s
+weakening WeakRefl  = id
+weakening (WeakR w) = weaken . weakening w
+weakening (WeakL w) = weakening w . weaken
+weakening (WeakTrans w₁ w₂) = weakening w₂ . weakening w₁
+
 type family CtxAppend γ γ' :: Ctx * where
   CtxAppend γ E = γ
-  CtxAppend γ (γ' ::> b) = CtxAppend γ γ' ::> b
+  CtxAppend γ (γ' ::> b) = (CtxAppend γ γ') ::> b
 
 type family CtxDiff γ γ' :: Ctx * where
   CtxDiff γ γ = E
-  CtxDiff γ (γ' ::> b) = CtxDiff γ γ' ::> b
+  CtxDiff γ (γ' ::> b) = (CtxDiff γ γ') ::> b
 
-class (CtxAppend γ diff ~ γ') => AutoWeaken γ diff γ' where
-  autoweaken' :: LFModel f m => Proxy diff -> f γ s -> f γ' s
+class AutoWeaken γ diff γ' where
+  autoweakening :: Proxy diff -> Weakening γ γ'
+
+instance AutoWeaken γ E γ where
+  autoweakening _ = WeakRefl 
+instance AutoWeaken γ diff γ' => AutoWeaken γ (diff ::> b) (γ' ::> b) where
+  autoweakening _ = WeakR (autoweakening (Proxy :: Proxy diff))
 
 type CtxSub γ γ' = (CtxAppend γ (CtxDiff γ γ') ~ γ', AutoWeaken γ (CtxDiff γ γ') γ')
 
 autoweaken :: forall m f s γ γ'. (CtxSub γ γ', LFModel f m) => f γ s -> f γ' s
-autoweaken = autoweaken' (Proxy :: Proxy (CtxDiff γ γ'))
-
-instance AutoWeaken γ E γ where
-  autoweaken' _ = id
-instance AutoWeaken γ diff γ' => AutoWeaken γ (diff ::> b) (γ' ::> b) where
-  autoweaken' _ = weaken . autoweaken' (Proxy :: Proxy diff)
-
+autoweaken = weakening (autoweakening (Proxy :: Proxy (CtxDiff γ γ')))
 
 
 lf_type :: (WFContext γ, LFModel f m) => m (f γ KIND)

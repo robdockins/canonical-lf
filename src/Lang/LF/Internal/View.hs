@@ -2,9 +2,9 @@ module Lang.LF.Internal.View where
 
 import Data.Set (Set)
 
+import Lang.LF.Internal.Build
 import Lang.LF.Internal.Model
 import Lang.LF.Internal.Hyps
-import Lang.LF.Internal.Subst
 
 kindViewLF :: forall f m γ γ'
             . (WFContext γ', LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ')

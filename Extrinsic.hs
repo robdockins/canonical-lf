@@ -244,8 +244,10 @@ pattern ArrowP t1 t2 <-
   (termView -> VConst "arrow" [t1,t2])
 
 
-cps :: ( WFContext γ, ?soln :: LFSoln LF
-      , ?hyps :: H γ, ?nms :: Set String)
+cps :: forall γ
+     . ( WFContext γ, ?soln :: LFSoln LF
+       , ?hyps :: H γ, ?nms :: Set String
+       )
     => LF γ TERM
     -> M (LF γ TERM)
 
@@ -253,8 +255,8 @@ cps (LamP body) =
   λ "klam" (tm ==> tm) $ \k -> (var k) @@
      (lam "x" $ \x ->
        lam "k" $ \k ->
-           (cps =<< ((return $ weaken $ weaken $ weaken body) @@
-             (weaken <$> var x))) @@
+           (cps =<< ((return $ weaken $ weaken $ weaken body) @@ (weaken <$> var x)))
+             @@
              (λ "m" tm $ \m -> app (weaken <$> var k) (var m)))
 
 cps (AppP x y) =
