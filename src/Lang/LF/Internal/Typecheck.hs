@@ -79,8 +79,7 @@ checkType :: (WFContext γ, LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ,
           -> m ()
 checkType z m a = do
   a' <- inferType m
-  q  <- alphaEq a a'
-  if q then return ()
+  if alphaEq a a' then return ()
        else do
          zdoc <- displayLF z
          mdoc <- displayLF m

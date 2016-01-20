@@ -117,6 +117,7 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
        Just x  -> return x
 
   freeVar = freeVarLF
+  varCensus = varCensusLF
 
   kindView = kindViewLF WeakRefl 
   typeView = typeViewLF WeakRefl

@@ -31,10 +31,12 @@ module Lang.LF
 , hsubst
 , Weakening(..)
 , weakening
+, weakenVar
 , weakSubst
 , withCurrentSolution
 , commitSolution
 , lookupSubst
+, mapF
 
   -- * Term views
 , KindView(..)

@@ -8,6 +8,14 @@ import Lang.LF.Internal.Model
 import Lang.LF.Internal.Hyps
 import Lang.LF.Internal.Solve
 
+weakenVar :: Weakening γ γ'
+          -> Var γ
+          -> Var γ'
+weakenVar WeakRefl = id
+weakenVar (WeakR w) = F . weakenVar w
+weakenVar (WeakL w) = weakenVar w . F
+weakenVar (WeakTrans w₁ w₂) = weakenVar w₂ . weakenVar w₁
+
 weakening :: LFModel f m
           => Weakening γ γ'
           -> f γ s

@@ -3,9 +3,13 @@ module Lang.LF.Internal.Model where
 
 import GHC.Exts ( Constraint )
 
+import           Data.Maybe
 import           Data.Proxy
 import           Data.Set (Set)
 import qualified Data.Set as Set
+import           Data.Map (Map)
+import qualified Data.Map as Map
+
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
 import           Lang.LF.ChangeT
@@ -143,6 +147,7 @@ data Weakening γ γ' where
   WeakTrans :: Weakening γ₁ γ₂ ->
                Weakening γ₂ γ₃ ->
                Weakening γ₁ γ₃
+
 
 -- | A substituion from γ to γ' represents a function that
 --   sends a term in context γ to one in context γ' that
@@ -284,8 +289,9 @@ class (Ord (LFTypeConst f), Ord (LFConst f), Ord (LFUVar f),
   validateCon  :: (WFContext γ, ?nms::Set String, ?hyps::Hyps f γ, ?soln :: LFSoln f)
                => f γ CON   -> m ()
 
-  alphaEq      :: (WFContext γ, ?soln :: LFSoln f) => f γ s -> f γ s -> m Bool
+  alphaEq      :: (WFContext γ, ?soln :: LFSoln f) => f γ s -> f γ s -> Bool
 
+  varCensus    :: (WFContext γ, ?soln :: LFSoln f) => Var γ -> f γ s -> Int
   freeVar      :: (WFContext γ, ?soln :: LFSoln f) => Var γ -> f γ s -> Bool
 
   constKind :: LFTypeConst f -> m (f E KIND)
@@ -332,36 +338,40 @@ alphaEqLF :: (WFContext γ, LFModel f m)
           -> (Var γ₂ -> Var γ)
           -> f γ₁ s
           -> f γ₂ s
-          -> m Bool
+          -> Bool
 alphaEqLF w₁ w₂ x y =
   case (unfoldLF x, unfoldLF y) of
     (Weak x'     , _)              -> alphaEqLF (w₁ . F) w₂ x' y
     (_           , Weak y')        -> alphaEqLF w₁ (w₂ . F) x y'
-    (Type        , Type)           -> return True
-    (KPi _ a k   , KPi _ a' k')    -> (&&) <$> alphaEqLF w₁ w₂ a a' <*> alphaEqLF (mapF w₁) (mapF w₂) k k'
+    (Type        , Type)           -> True
+    (KPi _ a k   , KPi _ a' k')    -> (&&) (alphaEqLF w₁ w₂ a a') (alphaEqLF (mapF w₁) (mapF w₂) k k')
     (AType x     , AType x')       -> alphaEqLF w₁ w₂ x x'
-    (TyPi _ a1 a2, TyPi _ a1' a2') -> (&&) <$> alphaEqLF w₁ w₂ a1 a1' <*> alphaEqLF (mapF w₁) (mapF w₂) a2 a2'
-    (TyConst x   , TyConst x')     -> return $ x == x'
-    (TyApp a m   , TyApp a' m')    -> (&&) <$> alphaEqLF w₁ w₂ a a' <*> alphaEqLF w₁ w₂ m m'
+    (TyPi _ a1 a2, TyPi _ a1' a2') -> (&&) (alphaEqLF w₁ w₂ a1 a1') (alphaEqLF (mapF w₁) (mapF w₂) a2 a2')
+    (TyConst x   , TyConst x')     -> x == x'
+    (TyApp a m   , TyApp a' m')    -> (&&) (alphaEqLF w₁ w₂ a a') (alphaEqLF w₁ w₂ m m')
     (ATerm x     , ATerm x')       -> alphaEqLF w₁ w₂ x x'
-    (Lam _ a m   , Lam _ a' m')    -> (&&) <$> alphaEqLF w₁ w₂ a a' <*> alphaEqLF (mapF w₁) (mapF w₂) m m'
-    (Var v       , Var v')         -> return $ w₁ (B v) == w₂ (B v')
-    (UVar u      , UVar u')        -> return $ u == u'
-    (Const x     , Const x')       -> return $ x == x'
-    (App r m     , App r' m')      -> (&&) <$> alphaEqLF w₁ w₂ r r' <*> alphaEqLF w₁ w₂ m m'
-    (Unify r1 r2 , Unify r1' r2')  -> (&&) <$> alphaEqLF w₁ w₂ r1 r1' <*> alphaEqLF w₁ w₂ r2 r2'
-    (And cs      , And cs')        -> all id <$> (sequence $ zipWith (alphaEqLF w₁ w₂) cs cs')
-    (Forall _ a c, Forall _ a' c') -> (&&) <$> alphaEqLF w₁ w₂ a a' <*> alphaEqLF (mapF w₁) (mapF w₂) c c'
-    (Exists _ a c, Exists _ a' c') -> (&&) <$> alphaEqLF w₁ w₂ a a' <*> alphaEqLF (mapF w₁) (mapF w₂) c c'
-    (Sigma _ a g , Sigma _ a' g')  -> (&&) <$> alphaEqLF w₁ w₂ a a' <*> alphaEqLF (mapF w₁) (mapF w₂) g g'
-    (Goal m c    , Goal m' c')     -> (&&) <$> alphaEqLF w₁ w₂ m m' <*> alphaEqLF w₁ w₂ c c'
-    _ -> return False
-
+    (Lam _ a m   , Lam _ a' m')    -> (&&) (alphaEqLF w₁ w₂ a a') (alphaEqLF (mapF w₁) (mapF w₂) m m')
+    (Var v       , Var v')         -> w₁ (B v) == w₂ (B v')
+    (UVar u      , UVar u')        -> u == u'
+    (Const x     , Const x')       -> x == x'
+    (App r m     , App r' m')      -> (&&) (alphaEqLF w₁ w₂ r r') (alphaEqLF w₁ w₂ m m')
+    (Unify r1 r2 , Unify r1' r2')  -> (&&) (alphaEqLF w₁ w₂ r1 r1') (alphaEqLF w₁ w₂ r2 r2')
+    (And cs      , And cs')        -> and (zipWith (alphaEqLF w₁ w₂) cs cs')
+    (Forall _ a c, Forall _ a' c') -> (&&) (alphaEqLF w₁ w₂ a a') (alphaEqLF (mapF w₁) (mapF w₂) c c')
+    (Exists _ a c, Exists _ a' c') -> (&&) (alphaEqLF w₁ w₂ a a') (alphaEqLF (mapF w₁) (mapF w₂) c c')
+    (Sigma _ a g , Sigma _ a' g')  -> (&&) (alphaEqLF w₁ w₂ a a') (alphaEqLF (mapF w₁) (mapF w₂) g g')
+    (Goal m c    , Goal m' c')     -> (&&) (alphaEqLF w₁ w₂ m m') (alphaEqLF w₁ w₂ c c')
+    _ -> False
 
 
 data VarSet :: Ctx * -> * where
   VarSetEmpty :: VarSet γ
   VarSetCons  :: VarSet γ -> Set b -> VarSet (γ ::> b)
+
+data VarMap :: Ctx * -> * where
+  VarMapEmpty :: VarMap γ
+  VarMapCons  :: VarMap γ -> Map b Int -> VarMap (γ ::> b)
+
 
 mergeVarSet :: WFContext γ => VarSet γ -> VarSet γ -> VarSet γ
 mergeVarSet VarSetEmpty y = y
@@ -369,25 +379,52 @@ mergeVarSet x VarSetEmpty = x
 mergeVarSet (VarSetCons v b) (VarSetCons v' b') =
    VarSetCons (mergeVarSet v v') (Set.union b b')
 
+mergeVarMap :: WFContext γ => VarMap γ -> VarMap γ -> VarMap γ
+mergeVarMap VarMapEmpty y = y
+mergeVarMap x VarMapEmpty = x
+mergeVarMap (VarMapCons v b) (VarMapCons v' b') =
+   VarMapCons (mergeVarMap v v') (Map.unionWith (+) b b')
+
 singleVarSet :: WFContext γ => Var γ -> VarSet γ
 singleVarSet (F f) = VarSetCons (singleVarSet f) Set.empty
 singleVarSet (B b) = VarSetCons VarSetEmpty (Set.singleton b)
 
+singleVarMap :: WFContext γ => Var γ -> VarMap γ
+singleVarMap (F f) = VarMapCons (singleVarMap f) Map.empty
+singleVarMap (B b) = VarMapCons VarMapEmpty (Map.singleton b 1)
+
 emptyVarSet :: VarSet γ
 emptyVarSet = VarSetEmpty
+
+emptyVarMap :: VarMap γ
+emptyVarMap = VarMapEmpty
 
 inVarSet :: WFContext γ => VarSet γ -> Var γ -> Bool
 inVarSet VarSetEmpty _ = False
 inVarSet (VarSetCons s _) (F v) = inVarSet s v
 inVarSet (VarSetCons _ s) (B b) = Set.member b s
 
+lookupVarMap :: WFContext γ => VarMap γ -> Var γ -> Int
+lookupVarMap VarMapEmpty _ = 0
+lookupVarMap (VarMapCons s _) (F v) = lookupVarMap s v
+lookupVarMap (VarMapCons _ m) (B b) = fromMaybe 0 $ Map.lookup b m
+
+varCensusLF :: (WFContext γ, LFModel f m) => Var γ -> f γ s -> Int
+varCensusLF v tm = lookupVarMap (countCensus tm) v
+
 freeVarLF :: (WFContext γ, LFModel f m) => Var γ -> f γ s -> Bool
 freeVarLF v tm = inVarSet (freeVars tm) v
+
 
 freeVars :: (WFContext γ, LFModel f m)
          => f γ s
          -> VarSet γ
 freeVars = foldFree mergeVarSet emptyVarSet singleVarSet
+
+countCensus :: (WFContext γ, LFModel f m)
+         => f γ s
+         -> VarMap γ
+countCensus = foldFree mergeVarMap emptyVarMap singleVarMap
 
 foldFree :: forall f m γ a s
           . LFModel f m
