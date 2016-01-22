@@ -91,30 +91,30 @@ sig = buildSignature
   ]
 
 
-instance WFContext γ => IsString (M (LF γ TYPE)) where
+instance LiftClosed γ => IsString (M (LF γ TYPE)) where
   fromString = tyConst . TNm
 
-instance WFContext γ => IsString (M (LF γ TERM)) where
+instance LiftClosed γ => IsString (M (LF γ TERM)) where
   fromString = tmConst . CNm
 
-tm :: WFContext γ => M (LF γ TYPE)
+tm :: LiftClosed γ => M (LF γ TYPE)
 tm = tyConst "tm"
 
-val :: WFContext γ => M (LF γ TYPE)
+val :: LiftClosed γ => M (LF γ TYPE)
 val = tyConst "val"
 
-v :: WFContext γ => M (LF γ TYPE)
+v :: LiftClosed γ => M (LF γ TYPE)
 v = tyConst "v"
 
-kv :: WFContext γ => M (LF γ TYPE)
+kv :: LiftClosed γ => M (LF γ TYPE)
 kv = tyConst "kv"
 
-ml :: WFContext γ => M (LF γ TYPE)
+ml :: LiftClosed γ => M (LF γ TYPE)
 ml = tyConst "ml"
 
 
 
-cps_ml :: (WFContext γ, ?nms :: Set String, ?hyps :: H γ, ?soln :: LFSoln LF)
+cps_ml :: (LiftClosed γ, ?nms :: Set String, ?hyps :: H γ, ?soln :: LFSoln LF)
        => LF γ TERM -- ^ ML term to transform  :: ml
        -> LF γ TERM -- ^ static continuation :: (v ==> tm)
        -> M (LF γ TERM) -- ^ cps transformed term :: tm
@@ -126,75 +126,75 @@ cps_ml (termView -> VConst "ml_tt" []) k_top =
 
 cps_ml (termView -> VConst "ml_app" [e1,e2]) k_top =
   cps_ml e1 =<< (λ "z1" v $ \z1 ->
-    cps_ml (weaken e2) =<< (λ "z2" v $ \z2 ->
-      "letcont" @@ (return $ weaken $ weaken k_top)
+    cps_ml (weak e2) =<< (λ "z2" v $ \z2 ->
+      "letcont" @@ (return $ weak $ weak k_top)
                 @@ (λ "k" kv $ \k ->
-                      "app" @@ (weaken . weaken <$> var z1)
+                      "app" @@ (weak . weak <$> var z1)
                             @@ (var k)
-                            @@ (weaken <$> var z2))))
+                            @@ (weak <$> var z2))))
 
 cps_ml (termView -> VConst "ml_pair" [e1,e2]) k_top =
   cps_ml e1 =<< (λ "z1" v $ \z1 ->
-    cps_ml (weaken e2) =<< (λ "z2" v $ \z2 ->
-      "letval" @@ ("pair" @@ (weaken <$> var z1) @@ (var z2))
-               @@ (return $ weaken $ weaken k_top)))
+    cps_ml (weak e2) =<< (λ "z2" v $ \z2 ->
+      "letval" @@ ("pair" @@ (weak <$> var z1) @@ (var z2))
+               @@ (return $ weak $ weak k_top)))
 
 cps_ml (termView -> VConst "ml_inl" [e]) k_top =
   cps_ml e =<< (λ "z" v $ \z ->
      "letval" @@ ("inl" @@ var z)
-              @@ (return $ weaken k_top))
+              @@ (return $ weak k_top))
 
 cps_ml (termView -> VConst "ml_inr" [e]) k_top =
   cps_ml e =<< (λ "z" v $ \z ->
      "letval" @@ ("inr" @@ var z)
-              @@ (return $ weaken k_top))
+              @@ (return $ weak k_top))
 
 cps_ml (termView -> VConst "ml_fst" [e]) k_top =
   cps_ml e =<< (λ "z" v $ \z ->
      "let_prj1" @@ var z
-                @@ (return $ weaken k_top))
+                @@ (return $ weak k_top))
 
 cps_ml (termView -> VConst "ml_snd" [e]) k_top =
   cps_ml e =<< (λ "z" v $ \z ->
      "let_prj2" @@ var z
-                @@ (return $ weaken k_top))
+                @@ (return $ weak k_top))
 
 cps_ml (termView -> VConst "ml_lam" [e]) k_top =
   "letval" @@ ("lam" @@ (λ "k" kv $ \k ->
                           (λ "x" v $ \x -> do
-                            x' <- (return $ weaken $ weaken $ e) @@ (var x)
-                            tailcps_ml x' =<< (weaken <$> var k))))
+                            x' <- (return $ weak $ weak $ e) @@ (var x)
+                            tailcps_ml x' =<< (weak <$> var k))))
            @@ (return k_top)
 
 cps_ml (termView -> VConst "ml_letval" [e1,e2]) k_top =
   "letcont" @@ (λ "x" v $ \x -> do
-                   x' <- (return $ weaken $ e2) @@ (var x)
-                   cps_ml x' (weaken k_top))
+                   x' <- (return $ weak $ e2) @@ (var x)
+                   cps_ml x' (weak k_top))
             @@ (λ "j" kv $ \j -> do
-                   tailcps_ml (weaken $ e1) =<< (var j))
+                   tailcps_ml (weak $ e1) =<< (var j))
 
 cps_ml (termView -> VConst "ml_case" [e,el,er]) k_top =
   cps_ml e =<< (λ "z" v $ \z ->
-    "letcont" @@ (return $ weaken $ k_top)
+    "letcont" @@ (return $ weak $ k_top)
       @@ (λ "j" kv $ \j ->
       "letcont" @@ (λ "x1" v $ \x1 -> do
-                         el' <- (return $ weaken $ weaken $ weaken el) @@ var x1
-                         tailcps_ml el' =<< (weaken <$> var j))
+                         el' <- (return $ weak $ weak $ weak el) @@ var x1
+                         tailcps_ml el' =<< (weak <$> var j))
         @@ (λ "k1" kv $ \k1 ->
           "letcont" @@ (λ "x2" v $ \x2 -> do
-                           er' <- (return $ weaken $ weaken $ weaken $ weaken er) @@ var x2
-                           tailcps_ml er' =<< (weaken . weaken <$> var j))
+                           er' <- (return $ weak $ weak $ weak $ weak er) @@ var x2
+                           tailcps_ml er' =<< (weak . weak <$> var j))
             @@ (λ "k2" kv $ \k2 ->
-               "case" @@ (weaken . weaken . weaken <$> var z) @@ (weaken <$> var k1) @@ var k2))))
+               "case" @@ (weak . weak . weak <$> var z) @@ (weak <$> var k1) @@ var k2))))
 
 cps_ml tm _ = do
-  tm_doc <- ppLF TopPrec tm
+  tm_doc <- ppLF TopPrec WeakRefl tm
   fail $ show $ vcat
      [ text "Unexpected term in cps_ml:"
      , indent 2 tm_doc
      ]
 
-tailcps_ml :: (WFContext γ, ?nms :: Set String, ?hyps :: H γ, ?soln :: LFSoln LF)
+tailcps_ml :: (LiftClosed γ, ?nms :: Set String, ?hyps :: H γ, ?soln :: LFSoln LF)
        => LF γ TERM -- ^ ML term to transform :: ml
        -> LF γ TERM -- ^ a continuation variable :: kv
        -> M (LF γ TERM) -- ^ result :: tm
@@ -204,68 +204,68 @@ tailcps_ml (termView -> VConst "ml_var" [x]) k_top =
 
 tailcps_ml (termView -> VConst "ml_app" [e1,e2]) k_top =
   cps_ml e1 =<< (λ "x1" v $ \x1 ->
-    cps_ml (weaken e2) =<< (λ "x2" v $ \x2 ->
-      "app" @@ (weaken <$> var x1) @@ (return $ weaken $ weaken k_top) @@ (var x2)))
+    cps_ml (weak e2) =<< (λ "x2" v $ \x2 ->
+      "app" @@ (weak <$> var x1) @@ (return $ weak $ weak k_top) @@ (var x2)))
 
 tailcps_ml (termView -> VConst "ml_lam" [e]) k_top =
   "letval" @@ ("lam" @@ (λ "j" kv $ \j -> λ "x" v $ \x -> do
-                           e' <- (return $ weaken $ weaken e) @@ (var x)
-                           tailcps_ml e' =<< (weaken <$> var j)))
-           @@ (λ "f" v $ \f -> "enter" @@ (return $ weaken $ k_top) @@ (var f))
+                           e' <- (return $ weak $ weak e) @@ (var x)
+                           tailcps_ml e' =<< (weak <$> var j)))
+           @@ (λ "f" v $ \f -> "enter" @@ (return $ weak $ k_top) @@ (var f))
 
 tailcps_ml (termView -> VConst "ml_pair" [e1,e2]) k_top =
   cps_ml e1 =<< (λ "x1" v $ \x1 ->
-    cps_ml (weaken e2) =<< (λ "x2" v $ \x2 ->
-      "letval" @@ ("pair" @@ (weaken <$> var x1) @@ (var x2))
+    cps_ml (weak e2) =<< (λ "x2" v $ \x2 ->
+      "letval" @@ ("pair" @@ (weak <$> var x1) @@ (var x2))
                @@ (λ "x" v $ \x ->
-                     "enter" @@ (return $ weaken $ weaken $ weaken $ k_top) @@ (var x))))
+                     "enter" @@ (return $ weak $ weak $ weak $ k_top) @@ (var x))))
 
 tailcps_ml (termView -> VConst "ml_inl" [e]) k_top =
   cps_ml e =<< (λ "z" v $ \z ->
      "letval" @@ ("inl" @@ var z)
               @@ (λ "x" v $ \x ->
-                    "enter" @@ (return $ weaken $ weaken k_top) @@ var x))
+                    "enter" @@ (return $ weak $ weak k_top) @@ var x))
 
 tailcps_ml (termView -> VConst "ml_tt" []) k_top =
   "letval" @@ "tt"
            @@ (λ "x" v $ \x -> 
-                "enter" @@ (return $ weaken k_top) @@ var x)
+                "enter" @@ (return $ weak k_top) @@ var x)
 
 tailcps_ml (termView -> VConst "ml_fst" [e]) k_top =
   cps_ml e =<< (λ "z" v $ \z ->
      "let_prj1" @@ var z
                 @@ (λ "x" v $ \x -> 
-                     "enter" @@ (return $ weaken $ weaken k_top) @@ var x))
+                     "enter" @@ (return $ weak $ weak k_top) @@ var x))
 
 tailcps_ml (termView -> VConst "ml_snd" [e]) k_top =
   cps_ml e =<< (λ "z" v $ \z ->
      "let_prj2" @@ var z
                 @@ (λ "x" v $ \x -> 
-                     "enter" @@ (return $ weaken $ weaken k_top) @@ var x))
+                     "enter" @@ (return $ weak $ weak k_top) @@ var x))
 
 tailcps_ml (termView -> VConst "ml_letval" [e1,e2]) k_top =
   "letcont" @@ (λ "x" v $ \x -> do
-                   e2' <- (return $ weaken $ e2) @@ (var x)
-                   tailcps_ml e2' (weaken k_top))
+                   e2' <- (return $ weak $ e2) @@ (var x)
+                   tailcps_ml e2' (weak k_top))
             @@ (λ "j" kv $ \j -> do
-                   tailcps_ml (weaken e1) =<< (var j))
+                   tailcps_ml (weak e1) =<< (var j))
 
 tailcps_ml (termView -> VConst "ml_case" [e,el,er]) k_top =
   cps_ml e =<< (λ "z" v $ \z ->
     "letcont" @@ (λ "x1" v $ \x1 -> do
-                     el' <- (return $ weaken $ weaken el) @@ (var x1)
-                     tailcps_ml el' (weaken $ weaken k_top))
+                     el' <- (return $ weak $ weak el) @@ (var x1)
+                     tailcps_ml el' (weak $ weak k_top))
       @@ (λ "k1" kv $ \k1 ->
         "letcont" @@ (λ "x2" v $ \x2 -> do
-                        er' <- (return $ weaken $ weaken $ weaken er) @@ (var x2)
-                        tailcps_ml er' (weaken $ weaken $ weaken k_top))
+                        er' <- (return $ weak $ weak $ weak er) @@ (var x2)
+                        tailcps_ml er' (weak $ weak $ weak k_top))
            @@ (λ "k2" kv $ \k2 ->
-                "case" @@ (weaken . weaken <$> var z)
-                       @@ (weaken <$> var k1)
+                "case" @@ (weak . weak <$> var z)
+                       @@ (weak <$> var k1)
                        @@ (var k2))))
 
 tailcps_ml tm _ = do
-  tm_doc <- ppLF TopPrec tm
+  tm_doc <- ppLF TopPrec WeakRefl tm
   fail $ show $ vcat
      [ text "Unexpected term in tailcps_ml:"
      , indent 2 tm_doc
@@ -278,6 +278,43 @@ testTerm = mkTerm sig $
                  "ml_app" @@ ("ml_var" @@ "f")
                           @@ ("ml_pair" @@ ("ml_var" @@ (var x)) @@ ("ml_var" @@ "y")))
 
+data BindData (γ :: Ctx *) where
+  BindEmpty   :: BindData E
+  BindLetcont :: BindData γ
+              -> LF γ TERM {- :: v ==> term -}
+              -> BindData (γ ::> b)
+  BindLetval  :: BindData γ
+              -> LF γ TERM {- :: val  -}
+              -> BindData (γ ::> b)
+  BindLetinj  :: BindData γ
+              -> Bool {- left or right -}
+              -> LF γ TERM {- :: v -}
+              -> BindData (γ ::> b)
+
+strengthenVar :: Weakening γ γ'
+              -> Var γ'
+              -> Maybe (Var γ)
+strengthenVar = undefined
+
+simplifier :: (LiftClosed γ, ?hyps :: H γ, ?nms :: Set String, ?soln :: LFSoln LF)
+           => BindData γ
+           -> LF γ TERM
+           -> M (LF γ TERM)
+simplifier bd (termView -> VConst "letval" [v,m]) = do
+   let hyps = ?hyps
+   let bd' = BindLetval bd v
+   case termView v of
+     VConst "lam" [termView -> VLam _ k _ (termView -> VLam _ x _ (termView ->
+                        VConst "app" [ termView -> VVar g []
+                                     , termView -> VVar k' []
+                                     , termView -> VVar x' []
+                                     ]))]
+        | F (F g') <- g
+        , F k == k'
+        , x == x' ->
+             let ?hyps = hyps in
+             simplifier bd =<< (return m) @@ (var g')
+
 --  "letval" @@ "tt" @@ (λ "x" v $ \x -> "tm_var" @@ var x)
 
 cpsTerm :: LF E TERM
@@ -287,7 +324,7 @@ cpsTerm = mkTerm sig $ do
 main = inEmptyCtx $ do
    let x :: LF E TERM
        x = cpsTerm
-   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec x
+   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec WeakRefl x
    putStrLn ""
-   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ (ppLF TopPrec =<< inferType x)
+   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ (ppLF TopPrec WeakRefl =<< inferType WeakRefl x)
    putStrLn ""
