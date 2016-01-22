@@ -91,7 +91,7 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
   unfoldLF = lfTree
   foldLF = return . LFTree
   hsubst = hsubstLF
-  weaken = LFTree . Weak
+  weaken w = LFTree . Weak w
   aterm = LFTree . ATerm
   atype = LFTree . AType
   ppLF = prettyLF
@@ -103,7 +103,7 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
   validateGoal = validateGoalLF
   validateCon = validateConLF
 
-  alphaEq = alphaEqLF id id
+  alphaEq = alphaEqLF WeakRefl WeakRefl
 
   constKind a = M $ do
      sig <- ask
@@ -121,7 +121,7 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
 
   kindView = kindViewLF WeakRefl 
   typeView = typeViewLF WeakRefl
-  termView = termViewLF WeakRefl id
+  termView = termViewLF WeakRefl
   goalView = goalViewLF WeakRefl
   constraintView = constraintViewLF WeakRefl
 
@@ -196,7 +196,7 @@ addTypeConstant sig nm m =
            let ?nms = Set.empty
            let ?hyps = HNil
            let ?soln = Map.empty
-           unM $ validateKind k
+           unM $ validateKind WeakRefl k
            return sig{ sigFamilies = Map.insert nm k (sigFamilies sig) }
 
 addTermConstant :: (Ord a, Ord c, Pretty a, Pretty c)
@@ -212,7 +212,7 @@ addTermConstant sig nm m =
            let ?nms = Set.empty
            let ?hyps = HNil
            let ?soln = Map.empty
-           unM $ validateType x
+           unM $ validateType WeakRefl x
            return sig{ sigTerms = Map.insert nm x (sigTerms sig) }
 
 buildSignature :: (Ord a, Ord c, Pretty a, Pretty c)
@@ -244,5 +244,5 @@ mkTerm sig m = runM sig $ inEmptyCtx $ do
     let ?hyps = HNil
     let ?soln = Map.empty
     m' <- m
-    _ <- inferType m'
+    _ <- inferType WeakRefl m'
     return m'

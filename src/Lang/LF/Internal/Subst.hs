@@ -5,26 +5,22 @@ import Data.Proxy
 import Lang.LF.ChangeT
 import Lang.LF.Internal.Build
 import Lang.LF.Internal.Model
-import Lang.LF.Internal.Solve
 
 weakSubst :: Weakening γ₁ γ₂
           -> Subst m f γ₂ γ₃
           -> Subst m f γ₁ γ₃
-weakSubst WeakRefl = id
-weakSubst (WeakR w) = weakSubst w . SubstWeak
-weakSubst (WeakL w) = SubstWeak . weakSubst w
-weakSubst (WeakTrans w₁ w₂) = weakSubst w₁ . weakSubst w₂
+weakSubst = SubstWeak
 
-lookupSubst :: LFModel f m
+lookupSubst :: (WFContext γ₂, LFModel f m)
           => Var γ₁
           -> Subst m f γ₁ γ₂
           -> m (f γ₂ TERM)
 lookupSubst v SubstRefl = var v
-lookupSubst v (SubstWeak s) = lookupSubst (F v) s
-lookupSubst (B v) (SubstApply _ f) = f v
+lookupSubst v (SubstWeak w s) = lookupSubst (weakenVar w v) s
+lookupSubst B (SubstApply _ x) = return x
 lookupSubst (F v) (SubstApply s _) = lookupSubst v s
-lookupSubst (B v) (SubstSkip _) = aterm <$> var0 (B v) id
-lookupSubst (F v) (SubstSkip s) = weaken <$> lookupSubst v s
+lookupSubst B (SubstSkip _) = aterm <$> foldLF Var
+lookupSubst (F v) (SubstSkip s) = weaken (WeakL WeakRefl) <$> lookupSubst v s
 
 strengthen :: (LFModel f m, ?soln :: LFSoln f)
            => f (γ::>b) s
@@ -32,15 +28,15 @@ strengthen :: (LFModel f m, ?soln :: LFSoln f)
 strengthen =
    hsubst (SubstApply
              SubstRefl
-             (\_ -> fail "Cannot strengthen; variable occurs free"))
-
+             (error "Cannot strengthen; variable occurs free"))
 
 instantiateLF :: forall f m γ s
-          . (WFContext γ, LFModel f m, ?soln :: LFSoln f)
-         => f γ s -> ChangeT m (f γ s)
+          . (LFModel f m, ?soln :: LFSoln f)
+         => f γ s
+         -> ChangeT m (f γ s)
 instantiateLF tm =
   case unfoldLF tm of
-    Weak x -> weaken <$> instantiate x
+    Weak w x -> weaken w <$> instantiate x
 
     Type   -> Unchanged tm
     KPi nm ty k -> onChange tm foldLF (KPi nm <$> instantiate ty <*> instantiate k)
@@ -56,32 +52,26 @@ instantiateLF tm =
         Right m -> Changed m
     Lam nm ty m -> onChange tm foldLF (Lam nm <$> instantiate ty <*> instantiate m)
 
-    Var _ -> Unchanged tm
+    Var -> Unchanged tm
     Const _ -> Unchanged tm
     App _ _ -> Unchanged tm
     UVar _ -> Unchanged tm 
 
     Fail -> Unchanged tm
-    Unify x y -> do
-      res <- case (go x, go y) of
-        (Left _, Left _) -> Unchanged UnifyDefault
+
+    Unify x y ->
+      case (go x, go y) of
+        (Left _, Left _) -> Unchanged tm
         (Left x', Right my) -> Changed $ do
           ATerm y' <- unfoldLF <$> my
-          return $ unifyATm SubstRefl SubstRefl x' y'
+          foldLF (Unify x' y')
         (Right mx, Left y') -> Changed $ do
           ATerm x' <- unfoldLF <$> mx
-          return $ unifyATm SubstRefl SubstRefl x' y'
+          foldLF (Unify x' y')
         (Right mx, Right my) -> Changed $ do
           ATerm x' <- unfoldLF <$> mx
           ATerm y' <- unfoldLF <$> my
-          return $ unifyATm SubstRefl SubstRefl x' y'
-      case res of
-        UnifyDefault   -> Unchanged tm
-        UnifySolve _ _ -> Unchanged tm
-        UnifyDecompose m -> Changed $
-          m >>= \case
-            Just xs -> foldLF (And xs)
-            Nothing -> liftClosed <$> foldLF Fail
+          foldLF (Unify x' y')
 
     And xs -> onChange tm foldLF (And <$> mapM instantiate xs)
     Forall nm ty c -> onChange tm foldLF (Forall nm <$> instantiate ty <*> instantiate c)
@@ -91,14 +81,14 @@ instantiateLF tm =
     Sigma nm ty g -> onChange tm foldLF (Sigma nm <$> instantiate ty <*> instantiate g)
 
  where
-  go :: forall γ. WFContext γ => f γ ATERM -> Either (f γ ATERM) (m (f γ TERM))
+  go :: forall γ. f γ ATERM -> Either (f γ ATERM) (m (f γ TERM))
   go atm =
     case unfoldLF atm of
-      Weak x ->
+      Weak w x ->
         case go x of
-          Left x' -> Left (weaken x')
-          Right m -> Right (weaken <$> m)
-      Var _   -> Left atm
+          Left x' -> Left (weaken w x')
+          Right m -> Right (weaken w <$> m)
+      Var     -> Left atm
       Const _ -> Left atm
       App m1 m2 ->
         case (go m1, instantiate m2) of
@@ -110,26 +100,55 @@ instantiateLF tm =
         | Just tm <- lookupUVar Proxy u ?soln -> Right (runChangeT $ instantiate tm)
         | otherwise -> Left atm
 
+
+substWeak :: Subst m f γ₂ γ₃
+         -> Weakening γ₁ γ₂
+         -> (forall γ'
+              . Weakening γ' γ₃
+             -> Subst m f γ₁ γ'
+             -> x)
+         -> x
+substWeak s WeakRefl k = k WeakRefl s
+substWeak SubstRefl w k = k w SubstRefl
+
+substWeak s (WeakL w) k =
+  substWeak s w $ \w' s' ->
+    substWeak s' (WeakR WeakRefl) $ \w'' s'' ->
+      k (weakTrans w'' w') s''
+
+substWeak (SubstWeak w s) w' k =
+  substWeak s (weakTrans w' w) k
+
+substWeak (SubstSkip s) (WeakR w) k =
+  substWeak s w $ \w' s' ->
+    k (WeakR w') s'
+substWeak (SubstSkip s) (WeakSkip w) k =
+  substWeak s w $ \w' s' ->
+    k (WeakSkip w') (SubstSkip s')
+
+substWeak (SubstApply s _f) (WeakR w) k =
+  substWeak s w k
+substWeak (SubstApply s f) (WeakSkip w) k =
+  k WeakRefl (SubstApply (SubstWeak w s) f)
+
+
 hsubstLF :: forall f m s γ γ'
           . (LFModel f m, ?soln :: LFSoln f)
          => Subst m f γ γ'
          -> f γ s
          -> m (f γ' s)
 hsubstLF SubstRefl tm = return tm
-hsubstLF (SubstWeak s) tm = hsubst s (weaken tm)
+hsubstLF (SubstWeak w s) tm = hsubst s (weaken w tm)
 hsubstLF sub tm =
   case unfoldLF tm of
-     Weak x ->
-       case sub of
-         SubstRefl      -> return tm
-         SubstWeak s    -> hsubst s (weaken tm)
-         SubstSkip s    -> weaken <$> hsubst s x
-         SubstApply s _ -> hsubst s x
+     Weak w x ->
+       substWeak sub w $ \w' sub' ->
+         weaken w' <$> hsubstLF sub' x
 
      Type ->
         case sub of
-          SubstRefl   -> return tm
-          SubstWeak s -> hsubst s (weaken tm)
+          SubstRefl     -> return tm
+          SubstWeak w s -> hsubst s (weaken w tm)
           _ -> error "impossible"
 
      KPi nm a k   -> foldLF =<< (KPi nm <$> hsubst sub a <*> hsubst sub' k)
@@ -140,7 +159,7 @@ hsubstLF sub tm =
      TyConst _ ->
         case sub of
           SubstRefl   -> return tm
-          SubstWeak s -> hsubst s (weaken tm)
+          SubstWeak w s -> hsubst s (weaken w tm)
           _ -> error "impossible"
 
      TyApp p m    -> foldLF =<< (TyApp <$> hsubst sub p <*> hsubst sub m)
@@ -162,12 +181,12 @@ hsubstLF sub tm =
      Fail ->
         case sub of
           SubstRefl   -> return tm
-          SubstWeak s -> hsubst s (weaken tm)
+          SubstWeak w s -> hsubst s (weaken w tm)
           _ -> error "impossible"
 
      ATerm x      -> either return (foldLF . ATerm) =<< hsubstTm sub x
      Const _      -> f =<< hsubstTm sub tm
-     Var _        -> f =<< hsubstTm sub tm
+     Var          -> f =<< hsubstTm sub tm
      App _ _      -> f =<< hsubstTm sub tm
      UVar _       -> f =<< hsubstTm sub tm
 
@@ -189,21 +208,16 @@ hsubstTm :: forall m f γ γ'
          -> m (Either (f γ' TERM) (f γ' ATERM))
 hsubstTm sub tm =
          case unfoldLF tm of
-           Weak x ->
-             case sub of
-               SubstRefl      -> return (Right tm)
-               SubstWeak s    -> hsubstTm s (weaken tm)
-               SubstApply s _ -> hsubstTm s x
-               SubstSkip s -> do
-                   x' <- hsubstTm s x
-                   return $ either (Left . weaken) (Right . weaken) x'
+           Weak w x ->
+             substWeak sub w $ \w' sub' ->
+               either (Left . weaken w') (Right . weaken w') <$> hsubstTm sub' x
 
-           Var v ->
+           Var ->
              case sub of
                SubstRefl      -> return $ Right tm
-               SubstWeak s    -> hsubstTm s (weaken tm)
-               SubstApply _ f -> Left <$> f v
-               SubstSkip _    -> Right <$> foldLF (Var v)
+               SubstWeak w s  -> hsubstTm s (weaken w tm)
+               SubstApply _ x -> return $ Left x
+               SubstSkip _    -> Right <$> foldLF Var
 
            UVar u ->
              case sub of
@@ -211,13 +225,13 @@ hsubstTm sub tm =
                  case lookupUVar Proxy u ?soln of
                    Just m  -> return $ Left m
                    Nothing -> return $ Right tm
-               SubstWeak s -> hsubstTm s (weaken tm)
+               SubstWeak w s -> hsubstTm s (weaken w tm)
                _ -> error "impossible"
 
            Const _ ->
              case sub of
                SubstRefl   -> return $ Right tm
-               SubstWeak s -> hsubstTm s (weaken tm)
+               SubstWeak w s -> hsubstTm s (weaken w tm)
                _ -> error "impossible"
 
            App r1 m2 -> do
@@ -228,23 +242,19 @@ hsubstTm sub tm =
                 m2' <- hsubst sub m2
                 case r1' of
                   Left m1' ->
-                    Left <$> gosub1 m1' m2'
+                    Left <$> gosub WeakRefl WeakRefl m1' m2'
                   Right r1'' ->
                     Right <$> foldLF (App r1'' m2')
 
  where
-  gosub1 :: forall γ. f γ TERM -> f γ TERM -> m (f γ TERM)
-  gosub1 x y =
-   case (unfoldLF x, unfoldLF y) of
-     (Weak x', Weak y') -> weaken <$> gosub1 x' y'
-     _ -> gosub2 x y SubstRefl
-
-  gosub2 :: forall γ γ'. f γ TERM
-                      -> f γ' TERM
-                      -> Subst m f γ γ'
-                      -> m (f γ' TERM)
-  gosub2 x y s =
-    case unfoldLF x of
-      Weak x'   -> gosub2 x' y (SubstWeak s)
-      Lam _ _ m -> hsubst (SubstApply s (\_ -> return y)) m
-      _ -> fail "hereditary substitution failed: ill-typed term"
+  gosub :: forall γ₁ γ₂. Weakening γ₁ γ' -> Weakening γ₂ γ' -> f γ₁ TERM -> f γ₂ TERM -> m (f γ' TERM)
+  gosub w1 w2 x' y' =
+   case (unfoldLF x', unfoldLF y') of
+     (Weak w1' x'', _) -> gosub (weakTrans w1' w1) w2 x'' y'
+     (_, Weak w2' y'') -> gosub w1 (weakTrans w2' w2) x' y''
+     (Lam _ _ m, _) ->
+        mergeWeak (weakNormalize w1) (weakNormalize w2) $ \wcommon w1' w2' -> 
+            weaken wcommon <$>
+              let sub' = SubstApply (SubstWeak w1' SubstRefl) (weaken w2' y') in
+              hsubst sub' m
+     _ -> fail "hereditary substitution failed: ill-typed term"

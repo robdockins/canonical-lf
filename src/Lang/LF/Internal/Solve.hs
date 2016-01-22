@@ -35,6 +35,8 @@ doSolve :: (LFModel f m)
         -> ChangeT m (Maybe [f E CON], LFSoln f)
 doSolve c soln =
   case unfoldLF c of
+    Weak _ _ -> fail "doSolve: impossible"
+
     Fail -> Unchanged (Nothing, soln)
 
     Unify r1 r2 ->
@@ -74,9 +76,9 @@ mkConj cs = do
      Just xs -> foldLF (And xs)
 
  where f :: forall γ. f γ CON -> m (Maybe [f γ CON])
-       f (unfoldLF -> And xs) = (fmap concat . sequence) <$> mapM f xs
-       f (unfoldLF -> Weak x) = fmap (map weaken) <$> f x
-       f (unfoldLF -> Fail)   = return Nothing
+       f (unfoldLF -> And xs)   = (fmap concat . sequence) <$> mapM f xs
+       f (unfoldLF -> Weak w x) = fmap (map (weaken w)) <$> f x
+       f (unfoldLF -> Fail)     = return Nothing
        f x = return (Just [x])
 
 unifyTm :: forall f m γ₁ γ₂ γ
@@ -88,8 +90,8 @@ unifyTm :: forall f m γ₁ γ₂ γ
      -> m (f γ CON)
 unifyTm s₁ s₂ x y =
    case (unfoldLF x, unfoldLF y) of
-     (Weak x', _) -> unifyTm (SubstWeak s₁) s₂ x' y
-     (_, Weak y') -> unifyTm s₁ (SubstWeak s₂) x y'
+     (Weak w x', _) -> unifyTm (SubstWeak w s₁) s₂ x' y
+     (_, Weak w y') -> unifyTm s₁ (SubstWeak w s₂) x y'
      (ATerm r1, ATerm r2) -> do
          let res = unifyATm s₁ s₂ r1 r2
          case res of
@@ -119,8 +121,8 @@ unifyTy :: forall f m γ₁ γ₂ γ
      -> m (f γ CON)
 unifyTy s₁ s₂ x y =
   case (unfoldLF x, unfoldLF y) of
-    (Weak x', _) -> unifyTy (SubstWeak s₁) s₂ x' y
-    (_, Weak y') -> unifyTy s₁ (SubstWeak s₂) x y'
+    (Weak w x', _) -> unifyTy (SubstWeak w s₁) s₂ x' y
+    (_, Weak w y') -> unifyTy s₁ (SubstWeak w s₂) x y'
     (TyPi nm a1 a2, TyPi _ a1' a2') ->
       mkConj =<< sequence
            [ unifyTy s₁ s₂ a1 a1'
@@ -140,8 +142,8 @@ unifyATy :: forall f m γ₁ γ₂ γ
      -> m (f γ CON)
 unifyATy s₁ s₂ x y =
   case (unfoldLF x, unfoldLF y) of
-    (Weak x', _) -> unifyATy (SubstWeak s₁) s₂ x' y
-    (_, Weak y') -> unifyATy s₁ (SubstWeak s₂) x y'
+    (Weak w x', _) -> unifyATy (SubstWeak w s₁) s₂ x' y
+    (_, Weak w y') -> unifyATy s₁ (SubstWeak w s₂) x y'
     (TyConst c1, TyConst c2)
       | c1 == c2  -> foldLF (And [])
     (TyApp p1 m1, TyApp p2 m2) -> do
@@ -175,8 +177,8 @@ unifyATm :: forall f m γ₁ γ₂ γ
      -> UnifyResult f m γ
 unifyATm s₁ s₂ x y =
   case (unfoldLF x, unfoldLF y) of
-    (Weak x', _) -> unifyATm (SubstWeak s₁) s₂ x' y
-    (_, Weak y') -> unifyATm s₁ (SubstWeak s₂) x y'
+    (Weak w x', _) -> unifyATm (SubstWeak w s₁) s₂ x' y
+    (_, Weak w y') -> unifyATm s₁ (SubstWeak w s₂) x y'
     (Const c₁, Const c₂)
        | c₁ == c₂  -> UnifyDecompose (return (Just []))
        | otherwise -> UnifyDecompose (return Nothing)

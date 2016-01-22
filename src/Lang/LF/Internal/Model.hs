@@ -3,13 +3,8 @@ module Lang.LF.Internal.Model where
 
 import GHC.Exts ( Constraint )
 
-import           Data.Maybe
 import           Data.Proxy
 import           Data.Set (Set)
-import qualified Data.Set as Set
-import           Data.Map (Map)
-import qualified Data.Map as Map
-
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
 import           Lang.LF.ChangeT
@@ -64,7 +59,7 @@ type family LFSoln (f :: Ctx * -> SORT -> *) :: *
 --   by `γ`, a context of free variables and `s` the syntactic sort
 --   of the term.
 data LF (f :: Ctx * -> SORT -> *) :: Ctx * -> SORT -> * where
-  Weak   :: f γ s -> LF f (γ ::> b) s
+  Weak   :: Weakening γ γ' -> f γ s -> LF f γ' s
 
   Type   :: LF f E KIND
   KPi    :: !String -> !(f γ TYPE) -> f (γ ::> ()) KIND -> LF f γ KIND
@@ -76,7 +71,7 @@ data LF (f :: Ctx * -> SORT -> *) :: Ctx * -> SORT -> * where
 
   ATerm  :: !(f γ ATERM) -> LF f γ TERM
   Lam    :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) TERM) -> LF f γ TERM
-  Var    :: !b -> LF f (γ ::> b) ATERM
+  Var    :: LF f (γ ::> b) ATERM
   Const  :: !(LFConst f) -> LF f E ATERM
   App    :: !(f γ ATERM) -> !(f γ TERM) -> LF f γ ATERM
   UVar   :: LFUVar f -> LF f E ATERM
@@ -94,7 +89,7 @@ data LF (f :: Ctx * -> SORT -> *) :: Ctx * -> SORT -> * where
 -- | A sequence of hypotheses, giving types to the free variables in γ.
 data Hyps (f :: Ctx * -> SORT -> *) (γ :: Ctx *) where
   HNil   :: Hyps f E
-  HCons  :: Hyps f γ -> Quant -> (b -> (String, f γ TYPE)) -> Hyps f (γ ::> b)
+  HCons  :: Hyps f γ -> Quant -> String -> f γ TYPE -> Hyps f (γ ::> b)
 
 
 type IsBoundVar b = (Show b, Ord b, Eq b)
@@ -106,12 +101,14 @@ type family WFContextRec (c::Ctx *) :: Constraint where
 type WFContext γ = (LiftClosed γ, Ord (Var γ), WFContextRec γ)
 
 class LiftClosed (γ :: Ctx *) where
+  liftWeakening :: Weakening E γ
   liftClosed :: LFModel f m => f E s -> f γ s
-instance LiftClosed E where
-  liftClosed = id
-instance LiftClosed γ => LiftClosed (γ ::> b) where
-  liftClosed = weaken . liftClosed
+  liftClosed = weaken liftWeakening
 
+instance LiftClosed E where
+  liftWeakening = WeakRefl
+instance LiftClosed γ => LiftClosed (γ ::> b) where
+  liftWeakening = WeakR liftWeakening
 
 data Prec
   = TopPrec
@@ -123,18 +120,28 @@ data Prec
 
 data Var :: Ctx * -> * where
   F :: Var γ -> Var (γ ::> b)
-  B :: b     -> Var (γ ::> b)
+  B ::          Var (γ ::> b)
 
-instance (Eq (Var E)) where
-  _ == _ = error "impossible"
-instance (Ord (Var E)) where
-  compare _ _ = error "impossible"
-instance (Show (Var E)) where
-  show _ = error "impossible"
+instance Show (Var γ) where
+ showsPrec _d B = ("B" ++)
+ showsPrec d (F v) = showParen (d > 10) $ showString "F " . showsPrec 11 v
 
-deriving instance (Eq (Var γ), Eq b) => Eq (Var (γ::>b))
-deriving instance (Ord (Var γ), Ord b) => Ord (Var (γ::>b))
-deriving instance (Show (Var γ), Show b) => Show (Var (γ::>b))
+eqVar :: Var γ -> Var γ -> Bool
+eqVar B B = True
+eqVar (F x) (F y) = eqVar x y
+eqVar B (F _) = False
+eqVar (F _) B = False
+
+compareVar :: Var γ -> Var γ -> Ordering
+compareVar B B = EQ
+compareVar B (F _) = LT
+compareVar (F x) (F y) = compareVar x y
+compareVar (F _) B = GT
+
+instance Eq (Var γ) where
+  (==) = eqVar
+instance Ord (Var γ) where
+  compare = compareVar
 
 -- | A weakening from γ to γ' represents a function that
 --   sends a term in context γ to one in context γ' that
@@ -144,10 +151,103 @@ data Weakening γ γ' where
   WeakRefl  :: Weakening γ γ
   WeakR     :: Weakening γ γ' -> Weakening γ (γ'::>b)
   WeakL     :: Weakening (γ::>b) γ' -> Weakening γ γ'
-  WeakTrans :: Weakening γ₁ γ₂ ->
-               Weakening γ₂ γ₃ ->
-               Weakening γ₁ γ₃
+  WeakSkip  :: Weakening γ γ' -> Weakening (γ::>b) (γ'::>b)
 
+weakCtx :: WFContext γ'
+        => Weakening γ γ'
+        -> ((WFContext γ) => x)
+        -> x
+weakCtx WeakRefl k = k
+weakCtx (WeakR w) k = weakCtx w k
+weakCtx (WeakL w) k = weakCtx w k
+weakCtx (WeakSkip w) k = weakCtx w k
+
+weakenVar :: Weakening γ γ'
+          -> Var γ
+          -> Var γ'
+weakenVar WeakRefl  = id
+weakenVar (WeakR w) = F . weakenVar w
+weakenVar (WeakL w) = weakenVar w . F
+weakenVar (WeakSkip w) = mapF (weakenVar w)
+
+-- Smart constructor.  Replaces (WeakSkip WeakRefl) with WeakRefl
+-- Correctness follows from functor/identity law:
+--    mapF 1 = 1
+weakSkip :: Weakening γ γ' -> Weakening (γ::>b) (γ'::>b)
+weakSkip WeakRefl = WeakRefl
+weakSkip w        = WeakSkip w
+
+weakTrans :: Weakening γ₁ γ₂
+          -> Weakening γ₂ γ₃
+          -> Weakening γ₁ γ₃
+
+weakTrans w₁ WeakRefl = w₁
+ -- by identity
+ --    w₁ ∘ 1 = w₁
+
+weakTrans w₁ (WeakR w₂) = WeakR (weakTrans w₁ w₂)
+ -- by associativity
+ --    w₁ ∘ (w₂ ∘ weak) = (w₁ ∘ w₂) ∘ weak
+
+weakTrans w₁ (WeakL w₂) = weakTrans (WeakR w₁) w₂
+ -- by associativity
+ --    w₁ ∘ (weak ∘ w₂) = (w₁ ∘ weak) ∘ w₂
+ --
+ -- Note: This is the only recursive rule that does not decrease both
+ --       arguments.  Termination can be proved via lexicographic
+ --       order that decreases w₂ then w₁.
+
+weakTrans WeakRefl w₂ = w₂
+ -- by identity
+ --    1 ∘ w₂ = w₂
+
+weakTrans (WeakL w₁) w₂ = WeakL (weakTrans w₁ w₂)
+ -- by associativity
+ --  (weak ∘ w₁) ∘ w₂ = weak ∘ (w₁ ∘ w₂)
+
+weakTrans (WeakR w₁) (WeakSkip w₂) = WeakR (weakTrans w₁ w₂)
+ -- by naturality of one-step weakening and assocativity
+ --   (w₁ ∘ weak) ∘ mapF w₂
+ --    = w₁ ∘ (weak ∘ mapF w₂)
+ --    = w₁ ∘ (w₂ ∘ weak)
+ --    = (w₁ ∘ w₂) ∘ weak
+
+weakTrans (WeakSkip w₁) (WeakSkip w₂) = WeakSkip (weakTrans w₁ w₂)
+ -- by functor law for mapF
+ --     mapF w₁ ∘ mapF w₂ = mapF (w₁ ∘ w₂)
+
+
+weakNormalize :: Weakening γ γ'
+              -> Weakening γ γ'
+weakNormalize WeakRefl             = WeakRefl
+weakNormalize (WeakR w)            = WeakR (weakNormalize w)
+weakNormalize (WeakSkip w)         = weakSkip (weakNormalize w)
+weakNormalize (WeakL WeakRefl)     = WeakR WeakRefl
+weakNormalize (WeakL (WeakR w))    = WeakR (weakNormalize (WeakL w))
+weakNormalize (WeakL (WeakSkip w)) = WeakR (weakNormalize w)
+weakNormalize (WeakL (WeakL w))    = weakNormalize (WeakL (weakNormalize (WeakL w)))
+
+mergeWeak :: Weakening γ₁ γ
+          -> Weakening γ₂ γ
+          -> (forall γ'. Weakening γ' γ -> Weakening γ₁ γ' -> Weakening γ₂ γ' -> x)
+          -> x
+mergeWeak WeakRefl w₂ k = k WeakRefl WeakRefl w₂
+mergeWeak w₁ WeakRefl k = k WeakRefl w₁ WeakRefl
+
+mergeWeak (WeakR w₁) (WeakR w₂) k =
+  mergeWeak w₁ w₂ $ \w w₁' w₂' ->
+    k (WeakR w) w₁' w₂'
+
+mergeWeak (WeakSkip w₁) (WeakSkip w₂) k =
+  mergeWeak w₁ w₂ $ \w w₁' w₂' ->
+    k (weakSkip w) (weakSkip w₁') (weakSkip w₂')
+
+mergeWeak (WeakL w₁) (WeakL w₂) k =
+  mergeWeak w₁ w₂ $ \w w₁' w₂' ->
+    k w (WeakL w₁') (WeakL w₂')
+
+mergeWeak w₁ w₂ k =
+  k WeakRefl w₁ w₂
 
 -- | A substituion from γ to γ' represents a function that
 --   sends a term in context γ to one in context γ' that
@@ -158,21 +258,20 @@ data Weakening γ γ' where
 --   and avoid traversing subtrees.
 data Subst m f :: Ctx * -> Ctx * -> * where
   SubstRefl  :: Subst m f γ γ
-  SubstApply :: Subst m f γ γ' -> (b -> m (f γ' TERM)) -> Subst m f (γ ::> b) γ'
-  SubstWeak  :: Subst m f (γ ::> b) γ' -> Subst m f γ γ'
+  SubstApply :: Subst m f γ γ' -> f γ' TERM -> Subst m f (γ ::> b) γ'
+  SubstWeak  :: Weakening γ₁ γ₂ -> Subst m f γ₂ γ₃ -> Subst m f γ₁ γ₃
   SubstSkip  :: Subst m f γ γ' -> Subst m f (γ ::> b) (γ' ::> b)
 
 -- | This datastructure represents the ways a canonical LF kind can be viewed.
 --   A kind is either the constant 'type' or a Π binder.
 data KindView f m γ where
  VType :: KindView f m γ
- VKPi :: forall f m γ γ'
-       . (WFContext (γ'::>()), ?nms :: Set String, ?hyps :: Hyps f (γ'::>()))
+ VKPi :: forall f m γ
+       . (?nms :: Set String, ?hyps :: Hyps f (γ::>()))
       => String
-      -> Weakening γ' γ
-      -> Var (γ'::>())
-      -> f γ' TYPE
-      -> f (γ'::>()) KIND
+      -> Var (γ::>())
+      -> f γ TYPE
+      -> f (γ::>()) KIND
       -> KindView f m γ
 
 -- | This datastructure represents the ways a canonical LF type family can be viewed.
@@ -180,13 +279,12 @@ data KindView f m γ where
 --   a Π binder.
 data TypeView f m γ where
  VTyConst :: LFTypeConst f -> [f γ TERM] -> TypeView f m γ
- VTyPi :: forall f m γ γ'
-        . (WFContext γ', ?nms :: Set String, ?hyps :: Hyps f (γ'::>()))
+ VTyPi :: forall f m γ
+        . (?nms :: Set String, ?hyps :: Hyps f (γ::>()))
        => String
-       -> Weakening γ' γ
-       -> Var (γ'::>())
-       -> f γ' TYPE
-       -> f (γ'::>()) TYPE
+       -> Var (γ::>())
+       -> f γ TYPE
+       -> f (γ::>()) TYPE
        -> TypeView f m γ
 
 -- | This datastructure represents the ways a canonical LF term can be viewed.
@@ -198,12 +296,11 @@ data TermView f m γ where
  VVar   :: Var γ -> [f γ TERM] -> TermView f m γ
  VUVar  :: LFUVar f -> [f γ TERM] -> TermView f m γ
  VLam   :: forall f m γ γ'
-         . (WFContext γ', ?nms :: Set String, ?hyps :: Hyps f (γ' ::> ()))
+         . (?nms :: Set String, ?hyps :: Hyps f (γ ::> ()))
         => String
-        -> Weakening γ' γ
-        -> Var (γ'::> ())
+        -> Var (γ::> ())
         -> f γ' TYPE
-        -> f (γ'::> ()) TERM
+        -> f (γ::> ()) TERM
         -> TermView f m γ
 
 -- | This datastructure represents the ways an LF constraint can be viewed.
@@ -214,21 +311,19 @@ data ConstraintView f m γ where
  VFail :: ConstraintView f m γ
  VAnd  :: [f γ CON] -> ConstraintView f m γ
  VUnify :: f γ TERM -> f γ TERM -> ConstraintView f m γ
- VForall :: forall f m γ γ'
-          . (WFContext γ', ?nms :: Set String, ?hyps :: Hyps f (γ'::>()))
+ VForall :: forall f m γ
+          . (?nms :: Set String, ?hyps :: Hyps f (γ::>()))
          => String
-         -> Weakening γ' γ
-         -> Var (γ'::> ())
-         -> f γ' TYPE
-         -> f (γ'::> ()) CON
+         -> Var (γ::> ())
+         -> f γ TYPE
+         -> f (γ::> ()) CON
          -> ConstraintView f m γ
- VExists :: forall f m γ γ'
-          . (WFContext γ', ?nms :: Set String, ?hyps :: Hyps f (γ'::>()))
+ VExists :: forall f m γ
+          . (?nms :: Set String, ?hyps :: Hyps f (γ::>()))
          => String
-         -> Weakening γ' γ
-         -> Var (γ'::> ())
-         -> f γ' TYPE
-         -> f (γ'::> ()) CON
+         -> Var (γ::> ())
+         -> f γ TYPE
+         -> f (γ::> ()) CON
          -> ConstraintView f m γ
 
 
@@ -238,13 +333,12 @@ data ConstraintView f m γ where
 --   a continuation is provided that allows access to the subterm.
 data GoalView f m γ where
  VGoal :: f γ TERM -> f γ CON -> GoalView f m γ
- VSigma  :: forall f m γ γ'
-          . (WFContext γ', ?nms :: Set String, ?hyps :: Hyps f (γ'::>()))
+ VSigma  :: forall f m γ
+          . (?nms :: Set String, ?hyps :: Hyps f (γ::>()))
          => String
-         -> Weakening γ' γ
-         -> Var (γ'::> ())
-         -> f γ' TYPE
-         -> f (γ'::> ()) GOAL
+         -> Var (γ::> ())
+         -> f γ TYPE
+         -> f (γ::> ()) GOAL
          -> GoalView f m γ
 
 class (Ord (LFTypeConst f), Ord (LFConst f), Ord (LFUVar f),
@@ -254,7 +348,7 @@ class (Ord (LFTypeConst f), Ord (LFConst f), Ord (LFUVar f),
 
   unfoldLF :: f γ s -> LF f γ s
   foldLF :: LF f γ s -> m (f γ s)
-  weaken :: f γ s -> f (γ::>b) s
+  weaken :: Weakening γ γ' -> f γ s -> f γ' s
   aterm :: f γ ATERM -> f γ TERM
   atype :: f γ ATYPE -> f γ TYPE
 
@@ -263,58 +357,58 @@ class (Ord (LFTypeConst f), Ord (LFConst f), Ord (LFUVar f),
          -> f γ s
          -> m (f γ' s)
 
-  ppLF :: (WFContext γ, ?nms :: Set String, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
+  ppLF :: (?nms :: Set String, ?hyps :: Hyps f γ', ?soln :: LFSoln f)
        => Prec
+       -> Weakening γ γ'
        -> f γ s
        -> m Doc
 
-  validateKind :: (WFContext γ, ?nms::Set String, ?hyps::Hyps f γ, ?soln :: LFSoln f)
-               => f γ KIND  -> m ()
+  validateKind :: (?nms::Set String, ?hyps::Hyps f γ', ?soln :: LFSoln f)
+               => Weakening γ γ' -> f γ KIND  -> m ()
 
-  validateType :: (WFContext γ, ?nms::Set String, ?hyps::Hyps f γ, ?soln :: LFSoln f)
-               => f γ TYPE  -> m ()
+  validateType :: (?nms::Set String, ?hyps::Hyps f γ', ?soln :: LFSoln f)
+               => Weakening γ γ' -> f γ TYPE  -> m ()
 
-  inferKind    :: (WFContext γ, ?nms::Set String, ?hyps::Hyps f γ, ?soln :: LFSoln f)
-               => f γ ATYPE -> m (f γ KIND)
+  inferKind    :: (?nms::Set String, ?hyps::Hyps f γ', ?soln :: LFSoln f)
+               => Weakening γ γ' -> f γ ATYPE -> m (f γ' KIND)
 
-  inferType    :: (WFContext γ, ?nms::Set String, ?hyps::Hyps f γ, ?soln :: LFSoln f)
-               => f γ TERM  -> m (f γ TYPE)
+  inferType    :: (?nms::Set String, ?hyps::Hyps f γ', ?soln :: LFSoln f)
+               => Weakening γ γ' -> f γ TERM  -> m (f γ' TYPE)
 
-  inferAType   :: (WFContext γ, ?nms::Set String, ?hyps::Hyps f γ, ?soln :: LFSoln f)
-               => f γ ATERM -> m (f γ TYPE)
+  inferAType   :: (?nms::Set String, ?hyps::Hyps f γ', ?soln :: LFSoln f)
+               => Weakening γ γ' -> f γ ATERM -> m (f γ' TYPE)
 
-  validateGoal :: (WFContext γ, ?nms::Set String, ?hyps::Hyps f γ, ?soln :: LFSoln f)
-               => f γ GOAL  -> m ()
+  validateGoal :: (?nms::Set String, ?hyps::Hyps f γ', ?soln :: LFSoln f)
+               => Weakening γ γ' -> f γ GOAL  -> m ()
 
-  validateCon  :: (WFContext γ, ?nms::Set String, ?hyps::Hyps f γ, ?soln :: LFSoln f)
-               => f γ CON   -> m ()
+  validateCon  :: (?nms::Set String, ?hyps::Hyps f γ', ?soln :: LFSoln f)
+               => Weakening γ γ' -> f γ CON   -> m ()
 
-  alphaEq      :: (WFContext γ, ?soln :: LFSoln f) => f γ s -> f γ s -> Bool
-
-  varCensus    :: (WFContext γ, ?soln :: LFSoln f) => Var γ -> f γ s -> Int
-  freeVar      :: (WFContext γ, ?soln :: LFSoln f) => Var γ -> f γ s -> Bool
+  alphaEq      :: (?soln :: LFSoln f) => f γ s -> f γ s -> Bool
+  varCensus    :: (?soln :: LFSoln f) => Var γ -> f γ s -> Int
+  freeVar      :: (?soln :: LFSoln f) => Var γ -> f γ s -> Bool
 
   constKind :: LFTypeConst f -> m (f E KIND)
   constType :: LFConst f -> m (f E TYPE)
   uvarType  :: LFUVar f -> m (f E TYPE)
 
-  kindView :: (WFContext γ, ?nms :: Set String, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
+  kindView :: (?nms :: Set String, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
            => f γ KIND
            -> KindView f m γ
 
-  typeView :: (WFContext γ, ?nms :: Set String, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
+  typeView :: (?nms :: Set String, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
            => f γ TYPE
            -> TypeView f m γ
 
-  termView :: (WFContext γ, ?nms :: Set String, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
+  termView :: (?nms :: Set String, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
            => f γ TERM
            -> TermView f m γ
 
-  constraintView :: (WFContext γ, ?nms :: Set String, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
+  constraintView :: (?nms :: Set String, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
            => f γ CON
            -> ConstraintView f m γ
 
-  goalView :: (WFContext γ, ?nms :: Set String, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
+  goalView :: (?nms :: Set String, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
            => f γ GOAL
            -> GoalView f m γ
 
@@ -324,107 +418,86 @@ class (Ord (LFTypeConst f), Ord (LFConst f), Ord (LFUVar f),
   freshUVar :: f E TYPE -> m (LFUVar f)
   extendSolution :: LFUVar f -> f E TERM -> LFSoln f -> m (Maybe (LFSoln f))
 
-  instantiate :: (WFContext γ, ?soln :: LFSoln f)
+  instantiate :: (?soln :: LFSoln f)
               => f γ s -> ChangeT m (f γ s)
 
   solve :: f E CON -> m (f E CON, LFSoln f)
 
+weak :: LFModel f m
+     => f γ s
+     -> f (γ::>b) s
+weak = weaken (WeakR WeakRefl)
+
 mapF :: (Var γ -> Var γ') -> Var (γ ::> b) -> Var (γ' ::> b)
-mapF _ (B b) = B b
+mapF _ B = B
 mapF f (F x) = F (f x)
 
-alphaEqLF :: (WFContext γ, LFModel f m)
-          => (Var γ₁ -> Var γ)
-          -> (Var γ₂ -> Var γ)
+alphaEqLF :: LFModel f m
+          => Weakening γ₁ γ
+          -> Weakening γ₂ γ
           -> f γ₁ s
           -> f γ₂ s
           -> Bool
 alphaEqLF w₁ w₂ x y =
   case (unfoldLF x, unfoldLF y) of
-    (Weak x'     , _)              -> alphaEqLF (w₁ . F) w₂ x' y
-    (_           , Weak y')        -> alphaEqLF w₁ (w₂ . F) x y'
+    (Weak w x'   , _)              -> alphaEqLF (weakTrans w w₁) w₂ x' y
+    (_           , Weak w y')      -> alphaEqLF w₁ (weakTrans w w₂) x y'
     (Type        , Type)           -> True
-    (KPi _ a k   , KPi _ a' k')    -> (&&) (alphaEqLF w₁ w₂ a a') (alphaEqLF (mapF w₁) (mapF w₂) k k')
+    (KPi _ a k   , KPi _ a' k')    -> (&&) (alphaEqLF w₁ w₂ a a') (alphaEqLF (weakSkip w₁) (weakSkip w₂) k k')
     (AType x     , AType x')       -> alphaEqLF w₁ w₂ x x'
-    (TyPi _ a1 a2, TyPi _ a1' a2') -> (&&) (alphaEqLF w₁ w₂ a1 a1') (alphaEqLF (mapF w₁) (mapF w₂) a2 a2')
+    (TyPi _ a1 a2, TyPi _ a1' a2') -> (&&) (alphaEqLF w₁ w₂ a1 a1') (alphaEqLF (weakSkip w₁) (weakSkip w₂) a2 a2')
     (TyConst x   , TyConst x')     -> x == x'
     (TyApp a m   , TyApp a' m')    -> (&&) (alphaEqLF w₁ w₂ a a') (alphaEqLF w₁ w₂ m m')
     (ATerm x     , ATerm x')       -> alphaEqLF w₁ w₂ x x'
-    (Lam _ a m   , Lam _ a' m')    -> (&&) (alphaEqLF w₁ w₂ a a') (alphaEqLF (mapF w₁) (mapF w₂) m m')
-    (Var v       , Var v')         -> w₁ (B v) == w₂ (B v')
+    (Lam _ a m   , Lam _ a' m')    -> (&&) (alphaEqLF w₁ w₂ a a') (alphaEqLF (weakSkip w₁) (weakSkip w₂) m m')
+    (Var         , Var)            -> weakenVar w₁ B == weakenVar w₂ B
     (UVar u      , UVar u')        -> u == u'
     (Const x     , Const x')       -> x == x'
     (App r m     , App r' m')      -> (&&) (alphaEqLF w₁ w₂ r r') (alphaEqLF w₁ w₂ m m')
     (Unify r1 r2 , Unify r1' r2')  -> (&&) (alphaEqLF w₁ w₂ r1 r1') (alphaEqLF w₁ w₂ r2 r2')
     (And cs      , And cs')        -> and (zipWith (alphaEqLF w₁ w₂) cs cs')
-    (Forall _ a c, Forall _ a' c') -> (&&) (alphaEqLF w₁ w₂ a a') (alphaEqLF (mapF w₁) (mapF w₂) c c')
-    (Exists _ a c, Exists _ a' c') -> (&&) (alphaEqLF w₁ w₂ a a') (alphaEqLF (mapF w₁) (mapF w₂) c c')
-    (Sigma _ a g , Sigma _ a' g')  -> (&&) (alphaEqLF w₁ w₂ a a') (alphaEqLF (mapF w₁) (mapF w₂) g g')
+    (Forall _ a c, Forall _ a' c') -> (&&) (alphaEqLF w₁ w₂ a a') (alphaEqLF (weakSkip w₁) (weakSkip w₂) c c')
+    (Exists _ a c, Exists _ a' c') -> (&&) (alphaEqLF w₁ w₂ a a') (alphaEqLF (weakSkip w₁) (weakSkip w₂) c c')
+    (Sigma _ a g , Sigma _ a' g')  -> (&&) (alphaEqLF w₁ w₂ a a') (alphaEqLF (weakSkip w₁) (weakSkip w₂) g g')
     (Goal m c    , Goal m' c')     -> (&&) (alphaEqLF w₁ w₂ m m') (alphaEqLF w₁ w₂ c c')
     _ -> False
 
 
 data VarSet :: Ctx * -> * where
   VarSetEmpty :: VarSet γ
-  VarSetCons  :: VarSet γ -> Set b -> VarSet (γ ::> b)
+  VarSetCons  :: VarSet γ -> !Int -> VarSet (γ ::> b)
 
-data VarMap :: Ctx * -> * where
-  VarMapEmpty :: VarMap γ
-  VarMapCons  :: VarMap γ -> Map b Int -> VarMap (γ ::> b)
-
-
-mergeVarSet :: WFContext γ => VarSet γ -> VarSet γ -> VarSet γ
+mergeVarSet :: VarSet γ -> VarSet γ -> VarSet γ
 mergeVarSet VarSetEmpty y = y
 mergeVarSet x VarSetEmpty = x
 mergeVarSet (VarSetCons v b) (VarSetCons v' b') =
-   VarSetCons (mergeVarSet v v') (Set.union b b')
+   VarSetCons (mergeVarSet v v') (b + b')
 
-mergeVarMap :: WFContext γ => VarMap γ -> VarMap γ -> VarMap γ
-mergeVarMap VarMapEmpty y = y
-mergeVarMap x VarMapEmpty = x
-mergeVarMap (VarMapCons v b) (VarMapCons v' b') =
-   VarMapCons (mergeVarMap v v') (Map.unionWith (+) b b')
-
-singleVarSet :: WFContext γ => Var γ -> VarSet γ
-singleVarSet (F f) = VarSetCons (singleVarSet f) Set.empty
-singleVarSet (B b) = VarSetCons VarSetEmpty (Set.singleton b)
-
-singleVarMap :: WFContext γ => Var γ -> VarMap γ
-singleVarMap (F f) = VarMapCons (singleVarMap f) Map.empty
-singleVarMap (B b) = VarMapCons VarMapEmpty (Map.singleton b 1)
+singleVarSet :: Var γ -> VarSet γ
+singleVarSet (F f) = VarSetCons (singleVarSet f) 0
+singleVarSet B     = VarSetCons VarSetEmpty 1
 
 emptyVarSet :: VarSet γ
 emptyVarSet = VarSetEmpty
 
-emptyVarMap :: VarMap γ
-emptyVarMap = VarMapEmpty
+inVarSet :: VarSet γ -> Var γ -> Bool
+inVarSet s v = lookupVarSet s v > 0
 
-inVarSet :: WFContext γ => VarSet γ -> Var γ -> Bool
-inVarSet VarSetEmpty _ = False
-inVarSet (VarSetCons s _) (F v) = inVarSet s v
-inVarSet (VarSetCons _ s) (B b) = Set.member b s
+lookupVarSet :: VarSet γ -> Var γ -> Int
+lookupVarSet VarSetEmpty _ = 0
+lookupVarSet (VarSetCons s _) (F v) = lookupVarSet s v
+lookupVarSet (VarSetCons _ x) B = x
 
-lookupVarMap :: WFContext γ => VarMap γ -> Var γ -> Int
-lookupVarMap VarMapEmpty _ = 0
-lookupVarMap (VarMapCons s _) (F v) = lookupVarMap s v
-lookupVarMap (VarMapCons _ m) (B b) = fromMaybe 0 $ Map.lookup b m
+varCensusLF :: LFModel f m => Var γ -> f γ s -> Int
+varCensusLF v tm = lookupVarSet (countCensus tm) v
 
-varCensusLF :: (WFContext γ, LFModel f m) => Var γ -> f γ s -> Int
-varCensusLF v tm = lookupVarMap (countCensus tm) v
+freeVarLF :: LFModel f m => Var γ -> f γ s -> Bool
+freeVarLF v tm = inVarSet (countCensus tm) v
 
-freeVarLF :: (WFContext γ, LFModel f m) => Var γ -> f γ s -> Bool
-freeVarLF v tm = inVarSet (freeVars tm) v
-
-
-freeVars :: (WFContext γ, LFModel f m)
+countCensus :: LFModel f m
          => f γ s
          -> VarSet γ
-freeVars = foldFree mergeVarSet emptyVarSet singleVarSet
-
-countCensus :: (WFContext γ, LFModel f m)
-         => f γ s
-         -> VarMap γ
-countCensus = foldFree mergeVarMap emptyVarMap singleVarMap
+countCensus = foldFree mergeVarSet emptyVarSet singleVarSet
 
 foldFree :: forall f m γ a s
           . LFModel f m
@@ -438,11 +511,11 @@ foldFree merge z = go
   go :: forall γ s. (Var γ -> a) -> f γ s -> a
   go f tm =
     let f' :: forall b. (Var (γ ::> b) -> a)
-        f' (B _) = z
+        f' B     = z
         f' (F x) = f x
      in
     case unfoldLF tm of
-      Weak x -> go (f . F) x
+      Weak w x -> go (f . weakenVar w) x
       Type -> z
       KPi _ a k -> go f a `merge` go f' k
       AType x -> go f x
@@ -453,7 +526,7 @@ foldFree merge z = go
       Const _ -> z
       ATerm x -> go f x
       App r m -> go f r `merge` go f m
-      Var v -> f (B v)
+      Var -> f B
       Unify r1 r2 -> go f r1 `merge` go f r2
       And cs -> foldr merge z $ map (go f) cs
       Forall _ a c -> go f a `merge` go f' c

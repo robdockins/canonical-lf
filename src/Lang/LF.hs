@@ -30,7 +30,6 @@ module Lang.LF
 , Subst(..)
 , hsubst
 , Weakening(..)
-, weakening
 , weakenVar
 , weakSubst
 , withCurrentSolution
@@ -50,7 +49,6 @@ module Lang.LF
 , constraintView
 , goalView
 , extendCtx
-, weakenCtx
 , inEmptyCtx
 , extendHyps
 , freshUVar
@@ -68,6 +66,7 @@ module Lang.LF
 , displayLF
 
   -- * Term Construction
+, weak
 , weaken
 , lf_type
 , kPi
@@ -93,8 +92,8 @@ module Lang.LF
 , LFApplication (..)
 , LFFunc(..)
 , LFPi(..)
-, underGoal
-, underGoal'
+--, underGoal
+--, underGoal'
 , strengthen
 , solve
 , instantiate

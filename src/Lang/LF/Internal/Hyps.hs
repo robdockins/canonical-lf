@@ -24,41 +24,28 @@ freshName nm = getName ?nms nm
 lookupHyp :: LFModel f m
           => Hyps f γ
           -> Var γ
-          -> (f γ TYPE -> f γ' TYPE)
+          -> Weakening γ γ'
           -> (String, Quant, f γ' TYPE)
-lookupHyp (HCons _ q f) (B b) w =
-  let (nm, a) = f b
-   in (nm, q, w (weaken a))
-lookupHyp (HCons h _ _) (F x) w =
-  lookupHyp h x (w . weaken)
+lookupHyp (HCons _ q nm a) B w =
+  (nm, q, weaken (WeakL w) a)
+lookupHyp (HCons h _ _ _) (F x) w =
+  lookupHyp h x (WeakL w)
 lookupHyp HNil _ _ = error "impossible"
 
 lookupVar :: LFModel f m
           => Hyps f γ
           -> Var γ
           -> (String, Quant, f γ TYPE)
-lookupVar h v = lookupHyp h v id
+lookupVar h v = lookupHyp h v WeakRefl
 
 extendHyps :: Hyps f γ -> String -> Quant -> f γ TYPE -> Hyps f (γ ::> b)
-extendHyps h nm q a = HCons h q (\_ -> (nm,a))
-
-
-weakenHyps :: Hyps f (γ::>b) -> Hyps f γ
-weakenHyps (HCons h _ _) = h
-
+extendHyps h nm q a = HCons h q nm a
 
 inEmptyCtx :: ((?nms :: Set String, ?hyps :: Hyps f E) => a)
            -> a
 inEmptyCtx f =
   let ?nms = Set.empty in
   let ?hyps = HNil in
-  f
-
-weakenCtx :: (?hyps :: Hyps f (γ ::> b))
-          => ((?hyps :: Hyps f γ) => a)
-          -> a
-weakenCtx f =
-  let ?hyps = weakenHyps ?hyps in
   f
 
 extendCtx :: (?nms :: Set String, ?hyps :: Hyps f γ)
