@@ -16,6 +16,7 @@ library
     Lang.LF.Tree
     Lang.LF.ChangeT
   other-modules:
+    Lang.LF.Internal.Basics
     Lang.LF.Internal.Build
     Lang.LF.Internal.Hyps
     Lang.LF.Internal.Model
@@ -24,6 +25,7 @@ library
     Lang.LF.Internal.Subst
     Lang.LF.Internal.Typecheck
     Lang.LF.Internal.View
+    Lang.LF.Internal.Weak
 
   build-depends:
     base >= 4.8 && < 5,

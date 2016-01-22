@@ -108,3 +108,4 @@ import Lang.LF.Internal.Model
 import Lang.LF.Internal.Print
 import Lang.LF.Internal.Subst
 import Lang.LF.Internal.Typecheck
+import Lang.LF.Internal.Weak

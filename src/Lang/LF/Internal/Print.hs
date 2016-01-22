@@ -5,7 +5,7 @@ import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
 import Lang.LF.Internal.Model
 import Lang.LF.Internal.Hyps
-
+import Lang.LF.Internal.Weak
 
 displayLF :: (LFModel f m, ?nms :: Set String, ?hyps::Hyps f γ, ?soln :: LFSoln f)
           => f γ s -> m String

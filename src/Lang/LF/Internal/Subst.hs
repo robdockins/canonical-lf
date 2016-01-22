@@ -5,15 +5,16 @@ import Data.Proxy
 import Lang.LF.ChangeT
 import Lang.LF.Internal.Build
 import Lang.LF.Internal.Model
+import Lang.LF.Internal.Weak
 
 weakSubst :: Weakening γ₁ γ₂
-          -> Subst m f γ₂ γ₃
-          -> Subst m f γ₁ γ₃
+          -> Subst f γ₂ γ₃
+          -> Subst f γ₁ γ₃
 weakSubst = SubstWeak
 
 lookupSubst :: (WFContext γ₂, LFModel f m)
           => Var γ₁
-          -> Subst m f γ₁ γ₂
+          -> Subst f γ₁ γ₂
           -> m (f γ₂ TERM)
 lookupSubst v SubstRefl = var v
 lookupSubst v (SubstWeak w s) = lookupSubst (weakenVar w v) s
@@ -101,40 +102,11 @@ instantiateLF tm =
         | otherwise -> Left atm
 
 
-substWeak :: Subst m f γ₂ γ₃
-         -> Weakening γ₁ γ₂
-         -> (forall γ'
-              . Weakening γ' γ₃
-             -> Subst m f γ₁ γ'
-             -> x)
-         -> x
-substWeak s WeakRefl k = k WeakRefl s
-substWeak SubstRefl w k = k w SubstRefl
-
-substWeak s (WeakL w) k =
-  substWeak s w $ \w' s' ->
-    substWeak s' (WeakR WeakRefl) $ \w'' s'' ->
-      k (weakTrans w'' w') s''
-
-substWeak (SubstWeak w s) w' k =
-  substWeak s (weakTrans w' w) k
-
-substWeak (SubstSkip s) (WeakR w) k =
-  substWeak s w $ \w' s' ->
-    k (WeakR w') s'
-substWeak (SubstSkip s) (WeakSkip w) k =
-  substWeak s w $ \w' s' ->
-    k (WeakSkip w') (SubstSkip s')
-
-substWeak (SubstApply s _f) (WeakR w) k =
-  substWeak s w k
-substWeak (SubstApply s f) (WeakSkip w) k =
-  k WeakRefl (SubstApply (SubstWeak w s) f)
 
 
 hsubstLF :: forall f m s γ γ'
           . (LFModel f m, ?soln :: LFSoln f)
-         => Subst m f γ γ'
+         => Subst f γ γ'
          -> f γ s
          -> m (f γ' s)
 hsubstLF SubstRefl tm = return tm
@@ -191,7 +163,7 @@ hsubstLF sub tm =
      UVar _       -> f =<< hsubstTm sub tm
 
  where
-  sub' :: forall b. Subst m f (γ ::> b) (γ' ::> b)
+  sub' :: forall b. Subst f (γ ::> b) (γ' ::> b)
   sub' = SubstSkip sub
 
   f :: Either (f γ' TERM) (f γ' ATERM) -> m (f γ' ATERM)
@@ -203,7 +175,7 @@ hsubstLF sub tm =
     to avoid repeated matching on Either values. -}
 hsubstTm :: forall m f γ γ'
           . (LFModel f m, ?soln :: LFSoln f)
-         => Subst m f γ γ'
+         => Subst f γ γ'
          -> f γ ATERM
          -> m (Either (f γ' TERM) (f γ' ATERM))
 hsubstTm sub tm =

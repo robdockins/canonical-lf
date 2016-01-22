@@ -4,6 +4,7 @@ import Data.Proxy
 
 import Lang.LF.ChangeT
 import Lang.LF.Internal.Model
+import Lang.LF.Internal.Weak
 
 solveLF :: forall f m
          . (LFModel f m)
@@ -41,7 +42,7 @@ doSolve c soln =
 
     Unify r1 r2 ->
       let ?soln = soln in
-      let res = unifyATm SubstRefl SubstRefl r1 r2 in
+      let res = unifyATm WeakRefl WeakRefl r1 r2 in
       case res of
         UnifyDefault -> Unchanged (Just [c], soln)
         UnifyDecompose xs -> Changed (xs >>= \xs' -> return (xs', soln))
@@ -83,17 +84,17 @@ mkConj cs = do
 
 unifyTm :: forall f m γ₁ γ₂ γ
       . (WFContext γ, LFModel f m, ?soln :: LFSoln f)
-     => (Subst m f γ₁ γ)
-     -> (Subst m f γ₂ γ)
+     => Weakening γ₁ γ
+     -> Weakening γ₂ γ
      -> f γ₁ TERM
      -> f γ₂ TERM
      -> m (f γ CON)
-unifyTm s₁ s₂ x y =
+unifyTm w₁ w₂ x y =
    case (unfoldLF x, unfoldLF y) of
-     (Weak w x', _) -> unifyTm (SubstWeak w s₁) s₂ x' y
-     (_, Weak w y') -> unifyTm s₁ (SubstWeak w s₂) x y'
+     (Weak w x', _) -> unifyTm (weakTrans w w₁) w₂ x' y
+     (_, Weak w y') -> unifyTm w₁ (weakTrans w w₂) x y'
      (ATerm r1, ATerm r2) -> do
-         let res = unifyATm s₁ s₂ r1 r2
+         let res = unifyATm w₁ w₂ r1 r2
          case res of
            UnifyDecompose m -> do
              x <- m
@@ -101,55 +102,55 @@ unifyTm s₁ s₂ x y =
                Nothing -> liftClosed <$> foldLF Fail
                Just cs -> foldLF (And cs)
            UnifyDefault ->
-             foldLF =<< Unify <$> hsubst s₁ r1 <*> hsubst s₂ r2
+             foldLF (Unify (weaken w₁ r1) (weaken w₂ r2))
            UnifySolve u m ->
              foldLF =<< Unify <$> (liftClosed <$> foldLF (UVar u)) <*> m
 
      (Lam nm a1 m1, Lam _ a2 m2) -> do
-        cty <- unifyTy s₁ s₂ a1 a2
-        c <- unifyTm (SubstSkip s₁) (SubstSkip s₂) m1 m2
-        c' <- foldLF =<< Forall nm <$> hsubst s₁ a1 <*> return c
+        cty <- unifyTy w₁ w₂ a1 a2
+        c <- unifyTm (WeakSkip w₁) (WeakSkip w₂) m1 m2
+        c' <- foldLF (Forall nm (weaken w₁ a1) c)
         mkConj [cty, c']
      _ -> fail "Attempting to unify LF terms with unequal types"
 
 unifyTy :: forall f m γ₁ γ₂ γ
       . (WFContext γ, LFModel f m, ?soln :: LFSoln f)
-     => (Subst m f γ₁ γ)
-     -> (Subst m f γ₂ γ)
+     => Weakening γ₁ γ
+     -> Weakening γ₂ γ
      -> f γ₁ TYPE
      -> f γ₂ TYPE
      -> m (f γ CON)
-unifyTy s₁ s₂ x y =
+unifyTy w₁ w₂ x y =
   case (unfoldLF x, unfoldLF y) of
-    (Weak w x', _) -> unifyTy (SubstWeak w s₁) s₂ x' y
-    (_, Weak w y') -> unifyTy s₁ (SubstWeak w s₂) x y'
+    (Weak w x', _) -> unifyTy (weakTrans w w₁) w₂ x' y
+    (_, Weak w y') -> unifyTy w₁ (weakTrans w w₂) x y'
     (TyPi nm a1 a2, TyPi _ a1' a2') ->
       mkConj =<< sequence
-           [ unifyTy s₁ s₂ a1 a1'
-           , do c <- unifyTy (SubstSkip s₁) (SubstSkip s₂) a2 a2'
-                a1' <- hsubst s₁ a1
+           [ unifyTy w₁ w₂ a1 a1'
+           , do c <- unifyTy (WeakSkip w₁) (WeakSkip w₂) a2 a2'
+                let a1' = weaken w₁ a1
                 foldLF (Forall nm a1' c)
            ]
-    (AType p1, AType p2) -> unifyATy s₁ s₂ p1 p2
+    (AType p1, AType p2) -> unifyATy w₁ w₂ p1 p2
     _ -> fail "Attempting to unify LF types of different kinds"
 
 unifyATy :: forall f m γ₁ γ₂ γ
       . (WFContext γ, LFModel f m, ?soln :: LFSoln f)
-     => (Subst m f γ₁ γ)
-     -> (Subst m f γ₂ γ)
+     => Weakening γ₁ γ
+     -> Weakening γ₂ γ
      -> f γ₁ ATYPE
      -> f γ₂ ATYPE
      -> m (f γ CON)
-unifyATy s₁ s₂ x y =
+unifyATy w₁ w₂ x y =
   case (unfoldLF x, unfoldLF y) of
-    (Weak w x', _) -> unifyATy (SubstWeak w s₁) s₂ x' y
-    (_, Weak w y') -> unifyATy s₁ (SubstWeak w s₂) x y'
+    (Weak w x', _) -> unifyATy (weakTrans w w₁) w₂ x' y
+    (_, Weak w y') -> unifyATy w₁ (weakTrans w w₂) x y'
     (TyConst c1, TyConst c2)
       | c1 == c2  -> foldLF (And [])
     (TyApp p1 m1, TyApp p2 m2) -> do
       mkConj =<< sequence
-           [ unifyATy s₁ s₂ p1 p2
-           , unifyTm  s₁ s₂ m1 m2
+           [ unifyATy w₁ w₂ p1 p2
+           , unifyTm  w₁ w₂ m1 m2
            ]
     _ -> liftClosed <$> foldLF Fail
 
@@ -170,15 +171,15 @@ data UnifyResult f m γ
 
 unifyATm :: forall f m γ₁ γ₂ γ
       . (WFContext γ, LFModel f m, ?soln :: LFSoln f)
-     => (Subst m f γ₁ γ)
-     -> (Subst m f γ₂ γ)
+     => Weakening γ₁ γ
+     -> Weakening γ₂ γ
      -> f γ₁ ATERM
      -> f γ₂ ATERM
      -> UnifyResult f m γ
-unifyATm s₁ s₂ x y =
+unifyATm w₁ w₂ x y =
   case (unfoldLF x, unfoldLF y) of
-    (Weak w x', _) -> unifyATm (SubstWeak w s₁) s₂ x' y
-    (_, Weak w y') -> unifyATm s₁ (SubstWeak w s₂) x y'
+    (Weak w x', _) -> unifyATm (weakTrans w w₁) w₂ x' y
+    (_, Weak w y') -> unifyATm w₁ (weakTrans w w₂) x y'
     (Const c₁, Const c₂)
        | c₁ == c₂  -> UnifyDecompose (return (Just []))
        | otherwise -> UnifyDecompose (return Nothing)
@@ -187,22 +188,22 @@ unifyATm s₁ s₂ x y =
        | u == v -> UnifyDecompose (return (Just []))
     (UVar u, _)
        | Just x' <- lookupUVar Proxy u ?soln -> UnifyDecompose $ do
-           c <- unifyTm s₁ s₂ x' (aterm y)
+           c <- unifyTm w₁ w₂ x' (aterm y)
            return (Just [c])
-       | otherwise -> UnifySolve u (hsubst s₂ y)
+       | otherwise -> UnifySolve u (return $ weaken w₂ y)
     (_, UVar u)
        | Just y' <- lookupUVar Proxy u ?soln -> UnifyDecompose $ do
-           c <- unifyTm s₁ s₂ (aterm x) y'
+           c <- unifyTm w₁ w₂ (aterm x) y'
            return (Just [c])
-       | otherwise -> UnifySolve u (hsubst s₁ x)
+       | otherwise -> UnifySolve u (return $ weaken w₁ x)
 
     (App r₁ m₁, App r₂ m₂) ->
-       let res = unifyATm s₁ s₂ r₁ r₂ in
+       let res = unifyATm w₁ w₂ r₁ r₂ in
        case res of
          UnifyDefault      -> UnifyDefault
          UnifySolve _ _    -> UnifyDefault
          UnifyDecompose xs -> UnifyDecompose $ do
-             cm <- unifyTm s₁ s₂ m₁ m₂
+             cm <- unifyTm w₁ w₂ m₁ m₂
              cAnd' cm xs
 
     _ -> UnifyDefault

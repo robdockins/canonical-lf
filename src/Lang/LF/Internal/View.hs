@@ -4,6 +4,7 @@ import Data.Set (Set)
 
 import Lang.LF.Internal.Model
 import Lang.LF.Internal.Hyps
+import Lang.LF.Internal.Weak
 
 kindViewLF :: forall f m γ γ'
             . (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ)

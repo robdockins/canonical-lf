@@ -39,6 +39,7 @@ import qualified Data.Set as Set
 
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
+import Lang.LF.Internal.Basics
 import Lang.LF.Internal.Hyps
 import Lang.LF.Internal.Model
 import Lang.LF.Internal.Print

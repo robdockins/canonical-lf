@@ -7,6 +7,7 @@ import Data.Set (Set)
 import Lang.LF.Internal.Model
 import Lang.LF.Internal.Hyps
 import Lang.LF.Internal.Solve
+import Lang.LF.Internal.Weak
 
 
 type family CtxAppend γ γ' :: Ctx * where
@@ -249,7 +250,7 @@ unify :: forall f m γ
       => m (f γ TERM)
       -> m (f γ TERM)
       -> m (f γ CON)
-unify x y = join (unifyTm SubstRefl SubstRefl <$> x <*> y)
+unify x y = join (unifyTm WeakRefl WeakRefl <$> x <*> y)
 
 {-
 underGoal :: forall f m γ
