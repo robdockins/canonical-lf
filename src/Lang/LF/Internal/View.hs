@@ -91,6 +91,7 @@ constraintViewLF w c =
     Weak w' x -> constraintViewLF (weakTrans w' w) x
     Fail -> VFail
     Unify r1 r2 -> VUnify (aterm (weaken w r1)) (aterm (weaken w r2))
+    UnifyVar v r -> VUnifyVar v (aterm $ weaken w r)
     And cs -> VAnd (map (weaken w) cs)
     Forall nm a c ->
        let a' = weaken w a in

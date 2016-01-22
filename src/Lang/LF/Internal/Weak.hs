@@ -12,15 +12,6 @@ mapF :: (Var γ -> Var γ') -> Var (γ ::> b) -> Var (γ' ::> b)
 mapF _ B = B
 mapF f (F x) = F (f x)
 
-weakCtx :: WFContext γ'
-        => Weakening γ γ'
-        -> ((WFContext γ) => x)
-        -> x
-weakCtx WeakRefl k = k
-weakCtx (WeakR w) k = weakCtx w k
-weakCtx (WeakL w) k = weakCtx w k
-weakCtx (WeakSkip w) k = weakCtx w k
-
 weakenVar :: Weakening γ γ'
           -> Var γ
           -> Var γ'

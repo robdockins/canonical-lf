@@ -81,6 +81,10 @@ prettyLF prec w x =
          r2doc <- ppLF TopPrec w r2
          return $ group (r1doc <+> text "=" <> line <> r2doc)
 
+    UnifyVar u r -> do
+         rdoc <- ppLF TopPrec w r
+         return $ group (text "#" <> pretty u <+> text "=" <> line <> rdoc)
+
     And [] -> return $ text "⊤"
     And cs -> do
          cs' <- mapM (ppLF TopPrec w) cs

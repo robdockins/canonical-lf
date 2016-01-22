@@ -28,12 +28,12 @@ instance AutoWeaken γ diff γ' => AutoWeaken γ (diff ::> b) (γ' ::> b) where
 
 type CtxSub γ γ' = (CtxAppend γ (CtxDiff γ γ') ~ γ', AutoWeaken γ (CtxDiff γ γ') γ')
 
-autoweaken :: forall m f s γ γ'. (WFContext γ, CtxSub γ γ', LFModel f m) => f γ s -> f γ' s
+autoweaken :: forall m f s γ γ'. (CtxSub γ γ', LFModel f m) => f γ s -> f γ' s
 autoweaken = weaken (autoweakening (Proxy :: Proxy (CtxDiff γ γ')))
 
 
-lf_type :: (WFContext γ, LFModel f m) => m (f γ KIND)
-lf_type = liftClosed <$> foldLF Type
+lf_type :: (LFModel f m) => m (f γ KIND)
+lf_type = foldLF Type
 
 kPi :: LFModel f m => String -> m (f γ TYPE) -> m (f (γ ::> ()) KIND) -> m (f γ KIND)
 kPi nm a k = foldLF =<< (KPi nm <$> a <*> k)
@@ -44,26 +44,23 @@ tyPi nm a1 a2 = foldLF =<< (TyPi nm <$> a1 <*> a2)
 infixr 5 ==>
 infixl 2 @@
 
-var0 :: (WFContext γ, LFModel f m) => Var γ -> Weakening γ γ' -> m (f γ' ATERM)
+var0 :: (LFModel f m) => Var γ -> Weakening γ γ' -> m (f γ' ATERM)
 var0 (F x) w = var0 x (WeakL w)
 var0 B w = weaken w <$> foldLF Var
 
-var :: (WFContext γ, CtxSub γ γ', LFModel f m) => Var γ -> m (f γ' TERM)
+var :: (CtxSub γ γ', LFModel f m) => Var γ -> m (f γ' TERM)
 var v = autoweaken <$> (foldLF . ATerm =<< var0 v WeakRefl)
 
 uvar :: LFModel f m => LFUVar f -> m (f E TERM)
 uvar u = foldLF . ATerm =<< foldLF (UVar u)
 
 λ :: (LFModel f m
-   , WFContext γ
    , ?nms :: Set String
    , ?hyps :: Hyps f γ)
   => String
   -> m (f γ TYPE)
   -> (forall b.
-         (IsBoundVar b
-         , WFContext (γ ::> b)
-         , ?nms :: Set String
+         ( ?nms :: Set String
          , ?hyps :: Hyps f (γ::>b)
          )
          => Var (γ ::> b) -> m (f (γ::>b) TERM))
@@ -75,15 +72,12 @@ uvar u = foldLF . ATerm =<< foldLF (UVar u)
 
 class LFPi (s::SORT) where
   pi :: ( LFModel f m
-        , WFContext γ
         , ?nms :: Set String
         , ?hyps :: Hyps f γ
         )
      => String
      -> m (f γ TYPE)
-     -> (forall b. ( IsBoundVar b
-                   , WFContext (γ ::> b)
-                   , ?nms :: Set String
+     -> (forall b. ( ?nms :: Set String
                    , ?hyps :: Hyps f (γ::>b)
                    )
           => Var (γ::>b) -> m (f (γ::>b) s))
@@ -102,7 +96,7 @@ instance LFPi TYPE where
     foldLF (TyPi nm tp' a)
 
 class LFFunc (s::SORT) where
-  (==>) :: (WFContext γ, LFModel f m) => m (f γ TYPE) -> m (f γ s) -> m (f γ s)
+  (==>) :: (LFModel f m) => m (f γ TYPE) -> m (f γ s) -> m (f γ s)
 
 instance LFFunc KIND where
   (==>) = kArrow
@@ -110,26 +104,26 @@ instance LFFunc TYPE where
   (==>) = tyArrow
 
 class LFApplication (s::SORT) where
-  (@@) :: (WFContext γ, LFModel f m) => m (f γ s) -> m (f γ TERM) -> m (f γ s)
+  (@@) :: (LFModel f m) => m (f γ s) -> m (f γ TERM) -> m (f γ s)
 
 instance LFApplication TYPE where
   (@@) = tyApp
 instance LFApplication TERM where
   (@@) = app
 
-tyArrow :: (WFContext γ, LFModel f m) => m (f γ TYPE) -> m (f γ TYPE) -> m (f γ TYPE)
+tyArrow :: (LFModel f m) => m (f γ TYPE) -> m (f γ TYPE) -> m (f γ TYPE)
 tyArrow a1 a2 = do
    a1' <- a1
-   a2' <- weaken (WeakL WeakRefl) <$> a2
+   a2' <- weak <$> a2
    foldLF (TyPi "_" a1' a2')
 
-kArrow :: (WFContext γ, LFModel f m) => m (f γ TYPE) -> m (f γ KIND) -> m (f γ KIND)
+kArrow :: (LFModel f m) => m (f γ TYPE) -> m (f γ KIND) -> m (f γ KIND)
 kArrow a k = do
    a' <- a
-   k' <- weaken (WeakL WeakRefl) <$> k
+   k' <- weak <$> k
    foldLF (KPi "_" a' k')
 
-tyConst :: (WFContext γ, LFModel f m) => LFTypeConst f -> m (f γ TYPE)
+tyConst :: (LiftClosed γ, LFModel f m) => LFTypeConst f -> m (f γ TYPE)
 tyConst x = liftClosed <$> (foldLF . AType =<< foldLF (TyConst x))
 
 tyApp :: forall f m γ. (LFModel f m) => m (f γ TYPE) -> m (f γ TERM) -> m (f γ TYPE)
@@ -159,7 +153,7 @@ mkSigma nm a g = do
   g' <- g
   foldLF (Sigma nm a' g')
 
-tmConst :: (WFContext γ, LFModel f m) => LFConst f -> m (f γ TERM)
+tmConst :: (LiftClosed γ, LFModel f m) => LFConst f -> m (f γ TERM)
 tmConst x = liftClosed <$> (foldLF . ATerm =<< foldLF (Const x))
 
 
@@ -187,7 +181,7 @@ app x y = join (go WeakRefl WeakRefl <$> x <*> y)
 cExists :: LFModel f m
         => String
         -> m (f γ TYPE)
-        -> (forall b. IsBoundVar b => Var (γ::>b) -> m (f (γ::>b) CON))
+        -> (forall b. Var (γ::>b) -> m (f (γ::>b) CON))
         -> m (f γ CON)
 cExists nm tp f = do
     tp' <- tp
@@ -197,7 +191,7 @@ cExists nm tp f = do
 cForall :: LFModel f m
         => String
         -> m (f γ TYPE)
-        -> (forall b. IsBoundVar b => Var (γ::>b) -> m (f (γ::>b) CON))
+        -> (forall b. Var (γ::>b) -> m (f (γ::>b) CON))
         -> m (f γ CON)
 cForall nm tp f = do
     tp' <- tp
@@ -207,7 +201,7 @@ cForall nm tp f = do
 sigma   :: LFModel f m
         => String
         -> m (f γ TYPE)
-        -> (forall b. IsBoundVar b => Var (γ::>b) -> m (f (γ::>b) GOAL))
+        -> (forall b. Var (γ::>b) -> m (f (γ::>b) GOAL))
         -> m (f γ GOAL)
 sigma nm tp f = do
     tp' <- tp
@@ -219,13 +213,13 @@ cTrue :: LFModel f m
 cTrue = foldLF (And [])
 
 conj :: forall f m γ
-      . (WFContext γ, LFModel f m)
+      . (LFModel f m)
      => [m (f γ CON)]
      -> m (f γ CON)
 conj cs = do
    x <- fmap concat . sequence <$> (mapM f =<< sequence cs)
    case x of
-     Nothing -> liftClosed <$> foldLF Fail
+     Nothing -> foldLF Fail
      Just xs -> foldLF (And xs)
  where f :: forall γ. f γ CON -> m (Maybe [f γ CON])
        f (unfoldLF -> And xs) = (fmap concat . sequence) <$> mapM f xs
@@ -246,7 +240,7 @@ goal' :: LFModel f m
 goal' m c = foldLF (Goal m c)
 
 unify :: forall f m γ
-       . (WFContext γ, LFModel f m, ?soln :: LFSoln f)
+       . (LFModel f m, ?soln :: LFSoln f)
       => m (f γ TERM)
       -> m (f γ TERM)
       -> m (f γ CON)

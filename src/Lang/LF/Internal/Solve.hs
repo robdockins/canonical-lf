@@ -22,7 +22,7 @@ solveLF c0 = withCurrentSolution $ go (c0, ?soln)
         (mxs, soln') <- m
         case mxs of
           Nothing -> do
-            x <- liftClosed <$> foldLF Fail
+            x <- foldLF Fail
             return (x, soln')
           Just xs -> do
             let ?soln = soln'
@@ -40,6 +40,11 @@ doSolve c soln =
 
     Fail -> Unchanged (Nothing, soln)
 
+    UnifyVar u r -> Changed $ do
+      extendSolution u (aterm r) soln >>= \case
+         Nothing    -> return (Just [c], soln)
+         Just soln' -> return (Just [], soln')
+
     Unify r1 r2 ->
       let ?soln = soln in
       let res = unifyATm WeakRefl WeakRefl r1 r2 in
@@ -47,7 +52,7 @@ doSolve c soln =
         UnifyDefault -> Unchanged (Just [c], soln)
         UnifyDecompose xs -> Changed (xs >>= \xs' -> return (xs', soln))
         UnifySolve u r -> Changed $ do
-          m <- aterm <$> r
+          let m = aterm r
           extendSolution u m soln >>= \case
             Nothing    -> return (Just [c], soln)
             Just soln' -> return (Just [], soln')
@@ -67,13 +72,13 @@ doSolve c soln =
     Exists _ _ _ -> error "doSolve : exists quantifier"
 
 mkConj :: forall f m γ
-      . (WFContext γ, LFModel f m)
+      . (LFModel f m)
      => [f γ CON]
      -> m (f γ CON)
 mkConj cs = do
    x <- fmap concat . sequence <$> (mapM f cs)
    case x of
-     Nothing -> liftClosed <$> foldLF Fail
+     Nothing -> foldLF Fail
      Just xs -> foldLF (And xs)
 
  where f :: forall γ. f γ CON -> m (Maybe [f γ CON])
@@ -83,7 +88,7 @@ mkConj cs = do
        f x = return (Just [x])
 
 unifyTm :: forall f m γ₁ γ₂ γ
-      . (WFContext γ, LFModel f m, ?soln :: LFSoln f)
+      . (LFModel f m, ?soln :: LFSoln f)
      => Weakening γ₁ γ
      -> Weakening γ₂ γ
      -> f γ₁ TERM
@@ -99,12 +104,12 @@ unifyTm w₁ w₂ x y =
            UnifyDecompose m -> do
              x <- m
              case x of
-               Nothing -> liftClosed <$> foldLF Fail
+               Nothing -> foldLF Fail
                Just cs -> foldLF (And cs)
            UnifyDefault ->
              foldLF (Unify (weaken w₁ r1) (weaken w₂ r2))
            UnifySolve u m ->
-             foldLF =<< Unify <$> (liftClosed <$> foldLF (UVar u)) <*> m
+             foldLF (UnifyVar u m)
 
      (Lam nm a1 m1, Lam _ a2 m2) -> do
         cty <- unifyTy w₁ w₂ a1 a2
@@ -114,7 +119,7 @@ unifyTm w₁ w₂ x y =
      _ -> fail "Attempting to unify LF terms with unequal types"
 
 unifyTy :: forall f m γ₁ γ₂ γ
-      . (WFContext γ, LFModel f m, ?soln :: LFSoln f)
+      . (LFModel f m, ?soln :: LFSoln f)
      => Weakening γ₁ γ
      -> Weakening γ₂ γ
      -> f γ₁ TYPE
@@ -135,7 +140,7 @@ unifyTy w₁ w₂ x y =
     _ -> fail "Attempting to unify LF types of different kinds"
 
 unifyATy :: forall f m γ₁ γ₂ γ
-      . (WFContext γ, LFModel f m, ?soln :: LFSoln f)
+      . (LFModel f m, ?soln :: LFSoln f)
      => Weakening γ₁ γ
      -> Weakening γ₂ γ
      -> f γ₁ ATYPE
@@ -152,7 +157,7 @@ unifyATy w₁ w₂ x y =
            [ unifyATy w₁ w₂ p1 p2
            , unifyTm  w₁ w₂ m1 m2
            ]
-    _ -> liftClosed <$> foldLF Fail
+    _ -> foldLF Fail
 
 cAnd' :: LFModel f m
       => f γ CON
@@ -167,10 +172,10 @@ cAnd' c cs =
 data UnifyResult f m γ
   = UnifyDefault
   | UnifyDecompose (m (Maybe [f γ CON]))
-  | UnifySolve (LFUVar f) (m (f γ ATERM))
+  | UnifySolve (LFUVar f) (f γ ATERM)
 
 unifyATm :: forall f m γ₁ γ₂ γ
-      . (WFContext γ, LFModel f m, ?soln :: LFSoln f)
+      . (LFModel f m, ?soln :: LFSoln f)
      => Weakening γ₁ γ
      -> Weakening γ₂ γ
      -> f γ₁ ATERM
@@ -190,12 +195,12 @@ unifyATm w₁ w₂ x y =
        | Just x' <- lookupUVar Proxy u ?soln -> UnifyDecompose $ do
            c <- unifyTm w₁ w₂ x' (aterm y)
            return (Just [c])
-       | otherwise -> UnifySolve u (return $ weaken w₂ y)
+       | otherwise -> UnifySolve u (weaken w₂ y)
     (_, UVar u)
        | Just y' <- lookupUVar Proxy u ?soln -> UnifyDecompose $ do
            c <- unifyTm w₁ w₂ (aterm x) y'
            return (Just [c])
-       | otherwise -> UnifySolve u (return $ weaken w₁ x)
+       | otherwise -> UnifySolve u (weaken w₁ x)
 
     (App r₁ m₁, App r₂ m₂) ->
        let res = unifyATm w₁ w₂ r₁ r₂ in

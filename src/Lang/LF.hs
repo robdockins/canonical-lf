@@ -18,9 +18,6 @@ module Lang.LF
 , Var(..)
 , Hyps(..)
 , Quant(..)
-, WFContext
-, WFContextRec
-, IsBoundVar
 , LiftClosed(..)
 , AutoWeaken
 , autoweaken
@@ -92,14 +89,9 @@ module Lang.LF
 , LFApplication (..)
 , LFFunc(..)
 , LFPi(..)
---, underGoal
---, underGoal'
 , strengthen
 , solve
 , instantiate
-{-
-, dumpContext
--}
 ) where
 
 import Lang.LF.Internal.Build

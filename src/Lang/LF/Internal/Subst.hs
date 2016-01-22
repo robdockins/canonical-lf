@@ -12,7 +12,7 @@ weakSubst :: Weakening γ₁ γ₂
           -> Subst f γ₁ γ₃
 weakSubst = SubstWeak
 
-lookupSubst :: (WFContext γ₂, LFModel f m)
+lookupSubst :: (LFModel f m)
           => Var γ₁
           -> Subst f γ₁ γ₂
           -> m (f γ₂ TERM)
@@ -56,11 +56,29 @@ instantiateLF tm =
     Var -> Unchanged tm
     Const _ -> Unchanged tm
     App _ _ -> Unchanged tm
-    UVar _ -> Unchanged tm 
+    UVar _ -> Unchanged tm
 
     Fail -> Unchanged tm
 
-    Unify x y ->
+    UnifyVar u r ->
+      case go r of
+        Left _ -> Unchanged tm
+        Right mr -> Changed $ do
+          ATerm r' <- unfoldLF <$> mr
+          foldLF (UnifyVar u r')
+
+    Unify x y -> doUnify x y
+
+    And xs -> onChange tm foldLF (And <$> mapM instantiate xs)
+    Forall nm ty c -> onChange tm foldLF (Forall nm <$> instantiate ty <*> instantiate c)
+    Exists nm ty c -> onChange tm foldLF (Exists nm <$> instantiate ty <*> instantiate c)
+
+    Goal m c -> onChange tm foldLF (Goal <$> instantiate m <*> instantiate c)
+    Sigma nm ty g -> onChange tm foldLF (Sigma nm <$> instantiate ty <*> instantiate g)
+
+ where
+  doUnify :: (s ~ CON) => f γ ATERM -> f γ ATERM -> ChangeT m (f γ CON)
+  doUnify x y =
       case (go x, go y) of
         (Left _, Left _) -> Unchanged tm
         (Left x', Right my) -> Changed $ do
@@ -74,14 +92,6 @@ instantiateLF tm =
           ATerm y' <- unfoldLF <$> my
           foldLF (Unify x' y')
 
-    And xs -> onChange tm foldLF (And <$> mapM instantiate xs)
-    Forall nm ty c -> onChange tm foldLF (Forall nm <$> instantiate ty <*> instantiate c)
-    Exists nm ty c -> onChange tm foldLF (Exists nm <$> instantiate ty <*> instantiate c)
-
-    Goal m c -> onChange tm foldLF (Goal <$> instantiate m <*> instantiate c)
-    Sigma nm ty g -> onChange tm foldLF (Sigma nm <$> instantiate ty <*> instantiate g)
-
- where
   go :: forall γ. f γ ATERM -> Either (f γ ATERM) (m (f γ TERM))
   go atm =
     case unfoldLF atm of
@@ -144,6 +154,10 @@ hsubstLF sub tm =
         r1' <- f =<< hsubstTm sub r1
         r2' <- f =<< hsubstTm sub r2
         foldLF (Unify r1' r2')
+
+     UnifyVar u r -> do
+         r' <- f =<< hsubstTm sub r
+         foldLF (UnifyVar u r')
 
      Forall nm a c -> foldLF =<< (Forall nm <$> hsubst sub a <*> hsubst sub' c)
      Exists nm a c -> foldLF =<< (Exists nm <$> hsubst sub a <*> hsubst sub' c)
@@ -225,7 +239,7 @@ hsubstTm sub tm =
      (Weak w1' x'', _) -> gosub (weakTrans w1' w1) w2 x'' y'
      (_, Weak w2' y'') -> gosub w1 (weakTrans w2' w2) x' y''
      (Lam _ _ m, _) ->
-        mergeWeak (weakNormalize w1) (weakNormalize w2) $ \wcommon w1' w2' -> 
+        mergeWeak (weakNormalize w1) (weakNormalize w2) $ \wcommon w1' w2' ->
             weaken wcommon <$>
               let sub' = SubstApply (SubstWeak w1' SubstRefl) (weaken w2' y') in
               hsubst sub' m

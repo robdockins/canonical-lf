@@ -1,7 +1,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 module Lang.LF.Internal.Model where
 
-import GHC.Exts ( Constraint )
+--import GHC.Exts ( Constraint )
 
 import           Data.Proxy
 import           Data.Set (Set)
@@ -61,7 +61,7 @@ type family LFSoln (f :: Ctx * -> SORT -> *) :: *
 data LF (f :: Ctx * -> SORT -> *) :: Ctx * -> SORT -> * where
   Weak   :: Weakening γ γ' -> f γ s -> LF f γ' s
 
-  Type   :: LF f E KIND
+  Type   :: LF f γ KIND
   KPi    :: !String -> !(f γ TYPE) -> f (γ ::> ()) KIND -> LF f γ KIND
 
   AType   :: !(f γ ATYPE) -> LF f γ TYPE
@@ -76,8 +76,9 @@ data LF (f :: Ctx * -> SORT -> *) :: Ctx * -> SORT -> * where
   App    :: !(f γ ATERM) -> !(f γ TERM) -> LF f γ ATERM
   UVar   :: LFUVar f -> LF f E ATERM
 
-  Fail   :: LF f E CON
+  Fail   :: LF f γ CON
   Unify  :: !(f γ ATERM) -> !(f γ ATERM) -> LF f γ CON
+  UnifyVar :: LFUVar f -> !(f γ ATERM) -> LF f γ CON
   And    :: [f γ CON] -> LF f γ CON
   Forall :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) CON) -> LF f γ CON
   Exists :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) CON) -> LF f γ CON
@@ -90,15 +91,6 @@ data LF (f :: Ctx * -> SORT -> *) :: Ctx * -> SORT -> * where
 data Hyps (f :: Ctx * -> SORT -> *) (γ :: Ctx *) where
   HNil   :: Hyps f E
   HCons  :: Hyps f γ -> Quant -> String -> f γ TYPE -> Hyps f (γ ::> b)
-
-
-type IsBoundVar b = (Show b, Ord b, Eq b)
-
-type family WFContextRec (c::Ctx *) :: Constraint where
-  WFContextRec E = ()
-  WFContextRec (γ ::> b) = (WFContext γ, IsBoundVar b)
-
-type WFContext γ = (LiftClosed γ, Ord (Var γ), WFContextRec γ)
 
 class LiftClosed (γ :: Ctx *) where
   liftWeakening :: Weakening E γ
@@ -199,11 +191,11 @@ data TermView f m γ where
  VConst :: LFConst f -> [f γ TERM] -> TermView f m γ
  VVar   :: Var γ -> [f γ TERM] -> TermView f m γ
  VUVar  :: LFUVar f -> [f γ TERM] -> TermView f m γ
- VLam   :: forall f m γ γ'
+ VLam   :: forall f m γ
          . (?nms :: Set String, ?hyps :: Hyps f (γ ::> ()))
         => String
         -> Var (γ::> ())
-        -> f γ' TYPE
+        -> f γ TYPE
         -> f (γ::> ()) TERM
         -> TermView f m γ
 
@@ -215,6 +207,7 @@ data ConstraintView f m γ where
  VFail :: ConstraintView f m γ
  VAnd  :: [f γ CON] -> ConstraintView f m γ
  VUnify :: f γ TERM -> f γ TERM -> ConstraintView f m γ
+ VUnifyVar :: LFUVar f -> f γ TERM -> ConstraintView f m γ
  VForall :: forall f m γ
           . (?nms :: Set String, ?hyps :: Hyps f (γ::>()))
          => String
@@ -252,6 +245,7 @@ class (Ord (LFTypeConst f), Ord (LFConst f), Ord (LFUVar f),
 
   unfoldLF :: f γ s -> LF f γ s
   foldLF :: LF f γ s -> m (f γ s)
+
   weaken :: Weakening γ γ' -> f γ s -> f γ' s
   aterm :: f γ ATERM -> f γ TERM
   atype :: f γ ATYPE -> f γ TYPE
