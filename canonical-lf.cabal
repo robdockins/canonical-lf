@@ -58,11 +58,50 @@ library
     ViewPatterns
   ghc-options: -Werror -W
 
+executable toyml
+  hs-source-dirs: toyml
+  main-is: Main.hs
+  other-modules:
+    Lexer
+  Build-tools:
+    happy, alex >= 3.0.5
+  build-depends:
+    array,
+    base >= 4.8 && < 5,
+    ansi-wl-pprint,
+    bound >= 1.0.6,
+    canonical-lf,
+    containers,
+    mtl,
+    text,
+    transformers
+  default-language:
+    Haskell2010
+  default-extensions:
+    BangPatterns
+    ConstraintKinds
+    DataKinds
+    GADTs
+    FlexibleContexts
+    FlexibleInstances
+    FunctionalDependencies
+    ImplicitParams
+    LambdaCase
+    MultiParamTypeClasses
+    PatternGuards
+    PolyKinds
+    RankNTypes
+    ScopedTypeVariables
+    StandaloneDeriving
+    TypeFamilies
+    TypeOperators
+    ViewPatterns
+  ghc-options: -Werror -W
+
 executable testlf
   hs-source-dirs: .
   --main-is: Main.hs
-  --main-is: Extrinsic.hs
-  main-is: Ucps.hs
+  main-is: Extrinsic.hs
   build-depends:
     base >= 4.8 && < 5,
     ansi-wl-pprint,

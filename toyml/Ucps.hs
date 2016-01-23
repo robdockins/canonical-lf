@@ -3,7 +3,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wwarn #-}
-module Main where
+module Ucps where
 
 import Prelude hiding (pi, abs)
 
@@ -16,7 +16,6 @@ import           Data.Set (Set)
 --import           Data.Map (Map)
 --import qualified Data.Map as Map
 import           Data.String
-import           System.IO
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
 import           Lang.LF
@@ -620,10 +619,3 @@ simplTerm = mkTerm sig $ do
   Debug.trace "run simplifier" $
      simplifier BindEmpty cpsTerm
 
-main = inEmptyCtx $ do
-   let x :: LF E TERM
-       x = simplTerm
-   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec WeakRefl x
-   putStrLn ""
-   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ (ppLF TopPrec WeakRefl =<< inferType WeakRefl x)
-   putStrLn ""
