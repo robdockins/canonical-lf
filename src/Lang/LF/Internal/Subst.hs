@@ -131,11 +131,7 @@ hsubstLF sub tm =
        substWeak sub w $ \w' sub' ->
          weaken w' <$> hsubstLF sub' x
 
-     Type ->
-        case sub of
-          SubstRefl     -> return tm
-          SubstWeak w s -> hsubst s (weaken w tm)
-          _ -> error "impossible"
+     Type -> foldLF Type
 
      KPi nm a k   -> foldLF =<< (KPi nm <$> hsubst sub a <*> hsubst sub' k)
 
@@ -168,11 +164,7 @@ hsubstLF sub tm =
 
      Sigma nm a g  -> foldLF =<< (Sigma nm <$> hsubst sub a <*> hsubst sub' g)
      Goal m c      -> foldLF =<< (Goal <$> hsubst sub m <*> hsubst sub c)
-     Fail ->
-        case sub of
-          SubstRefl   -> return tm
-          SubstWeak w s -> hsubst s (weaken w tm)
-          _ -> error "impossible"
+     Fail          -> foldLF Fail
 
      ATerm x      -> either return (foldLF . ATerm) =<< hsubstTm sub x
      Const _      -> f =<< hsubstTm sub tm
