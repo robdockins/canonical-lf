@@ -367,7 +367,7 @@ simplifier bd (termView -> VConst "letcont" [k,m]) = do
                mkLam nm x t q
             _ -> fail "simplifier: expected function in 'letcont'"
 
-   case tryEtaLam k' of
+   case tryEtaCont k' of
      Just j ->
        Debug.trace "η-CONT" $ do
          j' <- j
@@ -399,15 +399,15 @@ simplifier bd (termView -> VConst "letcont" [k,m]) = do
      -- η-CONT rule.  If the bound contnuation is just an η-expanded
      -- version of 'j', replace the bound variable in the body with 'j'
      -- and drop the 'letcont'
- where tryEtaLam :: LF γ TERM -> Maybe (M (LF γ TERM))
-       tryEtaLam (termView -> VLam _ x _
+ where tryEtaCont :: LF γ TERM -> Maybe (M (LF γ TERM))
+       tryEtaCont (termView -> VLam _ x _
                      (termView -> VConst "enter" [ j, termView -> VVar x' []]))
           | x == x' =
              case termView j of
                VVar (F j') [] -> Just $ var j'
                VConst c []    -> Just $ tmConst c
                _ -> Nothing
-       tryEtaLam _ = Nothing
+       tryEtaCont _ = Nothing
 
 simplifier bd (termView -> VConst "letval" [v,m]) = do
    let hyps = ?hyps
@@ -416,10 +416,10 @@ simplifier bd (termView -> VConst "letval" [v,m]) = do
      -- the body of the let with 'g' and drop the let.
      VConst "lam" [termView -> VLam _ k _ (termView -> VLam _ x _ (termView ->
                         VConst "app" [ termView -> VVar (F (F g)) []
-                                     , termView -> VVar k' []
+                                     , termView -> VVar (F k') []
                                      , termView -> VVar x' []
                                      ]))]
-        | F k == k', x == x' ->
+        | k == k', x == x' ->
              let ?hyps = hyps in
              Debug.trace "η-FUN" $
                simplifier bd =<< (return m) @@ (var g)
@@ -428,7 +428,8 @@ simplifier bd (termView -> VConst "letval" [v,m]) = do
      -- pair were previously projected from a pair variable, replace the reconstructed
      -- pair with the original variable. (NB: this rule is only valid for strict pairs)
      VConst "pair" [ termView -> VVar x []
-                   , termView -> VVar y []]
+                   , termView -> VVar y []
+                   ]
        | Just (True, vx) <- lookupProjData bd x
        , Just (False,vy) <- lookupProjData bd y
        , alphaEq vx vy ->
