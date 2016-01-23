@@ -20,7 +20,7 @@ import           Lang.LF.ChangeT
 import           Lang.LF.Tree hiding (M)
 import qualified Lang.LF.Tree as Tree
 
-import qualified Debug.Trace as Debug
+--import qualified Debug.Trace as Debug
 
 type LF = Tree.LFTree String String
 type Sig = Tree.Signature String String
@@ -117,52 +117,58 @@ sig = buildSignature
   ]
 
 
-tp :: WFContext γ => M (LF γ TYPE)
+tp :: LiftClosed γ => M (LF γ TYPE)
 tp = tyConst "tp"
 
-unit :: WFContext γ => M (LF γ TERM)
+unit :: LiftClosed γ => M (LF γ TERM)
 unit = tmConst "unit"
 
-nat :: WFContext γ => M (LF γ TERM)
+nat :: LiftClosed γ => M (LF γ TERM)
 nat = tmConst "nat"
 
-arrow :: WFContext γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM)
+arrow :: LiftClosed γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM)
 arrow x y = tmConst "arrow" @@ x @@ y
 
-tm :: WFContext γ => M (LF γ TERM) -> M (LF γ TYPE)
+tm :: LiftClosed γ => M (LF γ TERM) -> M (LF γ TYPE)
 tm a = tyConst "tm" @@ a
 
-tt :: WFContext γ => M (LF γ TERM)
+tt :: LiftClosed γ => M (LF γ TERM)
 tt = tmConst "tt"
 
-zero :: WFContext γ => M (LF γ TERM)
+zero :: LiftClosed γ => M (LF γ TERM)
 zero = tmConst "zero"
 
-suc :: WFContext γ => M (LF γ TERM) -> M (LF γ TERM)
+suc :: LiftClosed γ => M (LF γ TERM) -> M (LF γ TERM)
 suc x = tmConst "suc" @@ x
 
 infixl 5 `app`
-app :: WFContext γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM)
+app :: LiftClosed γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM)
 app a b x y = tmConst "app" @@ a @@ b @@ x @@ y
 
-lam :: WFContext γ
+lam :: ( LiftClosed γ
+       , ?nms :: Set String
+       , ?hyps :: Hyps LF γ
+       )
    => M (LF γ TERM)
    -> M (LF γ TERM)
    -> String
-   -> (forall b. IsBoundVar b => Var (γ::>b) -> M (LF (γ::>b) TERM))
+   -> (forall b.
+       ( ?nms :: Set String
+       , ?hyps :: Hyps LF (γ::>b)
+       ) => Var (γ::>b) -> M (LF (γ::>b) TERM))
    -> M (LF γ TERM)
 lam a b nm f = tmConst "lam" @@ a @@ b @@ (λ nm (tm a) f)
 
-nat_elim :: WFContext γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM)
+nat_elim :: LiftClosed γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM)
 nat_elim a z s n = tmConst "nat_elim" @@ a @@ z @@ s @@ n
 
-typeof :: WFContext γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TYPE)
+typeof :: LiftClosed γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TYPE)
 typeof a t p = tyConst "typeof" @@ a @@ t @@ p
 
-is_value :: WFContext γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TYPE)
+is_value :: LiftClosed γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TYPE)
 is_value a v = tyConst "is_value" @@ a @@ v
 
-step :: WFContext γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TYPE)
+step :: LiftClosed γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TYPE)
 step a x x' = tyConst "step" @@ a @@ x @@ x'
 
 
@@ -189,7 +195,7 @@ addConstraint c = do
    modify (x:)
 
 {-
-cps_type :: ( WFContext γ, ?soln :: LFSoln LF
+cps_type :: ( LiftClosed γ, ?soln :: LFSoln LF
        , ?nms :: Set String, ?hyps :: H γ
        )
       => LF E TERM
@@ -203,7 +209,7 @@ cps_type ans_ty (ArrowP t1 t2) = do
 cps_type _ x = return x
 
 -- Given a term compute a CPS conversion of it.
-cps, docps :: ( WFContext γ, ?soln :: LFSoln LF
+cps, docps :: ( LiftClosed γ, ?soln :: LFSoln LF
        , ?nms :: Set String, ?hyps :: H γ
        )
        => LF E TERM
@@ -277,7 +283,7 @@ docps ans_ty ty x =
 
 
 -- CBV reduction to head-normal form
-eval :: (?nms :: Set String, ?hyps :: H γ, WFContext γ, ?soln :: LFSoln LF)
+eval :: (?nms :: Set String, ?hyps :: H γ, LiftClosed γ, ?soln :: LFSoln LF)
      => LF γ TERM
      -> ChangeT M (LF γ TERM)
 
@@ -297,10 +303,10 @@ eval tm@(AppP a b m1 m2) = do
         eval =<< Changed (app (return a) (return b) m1' (return m2))
 
 -- evaluation under lambdas
-eval tm@(LamP a b (termView -> VLam nm wk _var tp body)) = do
+eval tm@(LamP a b (termView -> VLam nm var tp body)) = do
     case eval body of
       Changed body' -> do
-        Changed (tmConst "lam" @@ return a @@ return b @@ (weakening wk <$> mkLam nm (return tp) body'))
+        Changed (tmConst "lam" @@ return a @@ return b @@ (mkLam nm var tp =<< body'))
       _ -> Unchanged tm
 
 -- nat recursor: zero case
@@ -323,12 +329,13 @@ three :: M (LF E TERM)
 three = suc $ suc $ suc $ zero
 
 add :: M (LF E TERM)
-add = lam nat (arrow nat nat) "x" $ \x ->
-      lam nat nat "y" $ \y ->
-        nat_elim nat (var x) (lam nat nat "n" $ \n -> suc (var n)) (var y)
+add = inEmptyCtx $
+  lam nat (arrow nat nat) "x" $ \x ->
+  lam nat nat "y" $ \y ->
+     nat_elim nat (var x) (lam nat nat "n" $ \n -> suc (var n)) (var y)
 
 composeN :: M (LF E TERM) -> M (LF E TERM)
-composeN a = do
+composeN a = inEmptyCtx $ do
   lam (arrow a a) (arrow nat (arrow a a))  "f" $ \f ->
     lam nat (autoweaken <$> (arrow a a)) "n" $ \n ->
       nat_elim (autoweaken <$> (arrow a a))
@@ -361,6 +368,7 @@ evalTerm :: LF E TERM
 evalTerm = inEmptyCtx $
    mkTerm sig $ runChangeT $ eval testTerm
 
+{-
 cpsTerm :: LF E TERM
 cpsTerm = inEmptyCtx $
    mkTerm sig $ do
@@ -369,12 +377,12 @@ cpsTerm = inEmptyCtx $
       x <- (cps u t testTerm) @@ (λ "q" (tm nat) $ \_q -> tt)
       str <- displayLF x
       Debug.trace (unlines ["Final:", str]) $ return x
+-}
 
 main = inEmptyCtx $ do
    let x :: LF E TERM
-       x = cpsTerm
-   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec x
+       x = evalTerm
+   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec WeakRefl x
    putStrLn ""
-   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ (ppLF TopPrec =<< inferType x)
+   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ (ppLF TopPrec WeakRefl =<< inferType WeakRefl x)
    putStrLn ""
-

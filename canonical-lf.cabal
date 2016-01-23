@@ -60,7 +60,8 @@ library
 
 executable testlf
   hs-source-dirs: .
-  main-is: Extrinsic.hs
+  main-is: Main.hs
+  --main-is: Extrinsic.hs
   --main-is: Ucps.hs
   build-depends:
     base >= 4.8 && < 5,
