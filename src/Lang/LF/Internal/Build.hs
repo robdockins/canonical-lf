@@ -141,17 +141,15 @@ tyApp a m = join (go WeakRefl WeakRefl <$> a <*> m)
      (TyPi _ _ _, _) ->
         fail $ unwords ["Cannot apply terms to Pi Types"]
 
-mkLam :: LFModel f m => String -> m (f γ TYPE) -> m (f (γ::>()) TERM) -> m (f γ TERM)
-mkLam nm a m = do
-  a' <- a
-  m' <- m
-  foldLF (Lam nm a' m')
+mkLam :: LFModel f m => String -> Var (γ::>()) -> f γ TYPE -> f (γ::>()) TERM -> m (f γ TERM)
+mkLam nm B a m = do
+  foldLF (Lam nm a m)
+mkLam _nm (F _) _a _m =
+  fail "mkLam: Attempting to bind a variable not at the end of the context!"
 
-mkSigma :: LFModel f m => String -> m (f γ TYPE) -> m (f (γ::>()) GOAL) -> m (f γ GOAL)
+mkSigma :: LFModel f m => String -> f γ TYPE -> f (γ::>()) GOAL -> m (f γ GOAL)
 mkSigma nm a g = do
-  a' <- a
-  g' <- g
-  foldLF (Sigma nm a' g')
+  foldLF (Sigma nm a g)
 
 tmConst :: (LiftClosed γ, LFModel f m) => LFConst f -> m (f γ TERM)
 tmConst x = liftClosed <$> (foldLF . ATerm =<< foldLF (Const x))

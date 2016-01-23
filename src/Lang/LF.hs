@@ -33,6 +33,8 @@ module Lang.LF
 , commitSolution
 , lookupSubst
 , mapF
+, freeVar
+, varCensus
 
   -- * Term views
 , KindView(..)
