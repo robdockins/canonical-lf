@@ -313,8 +313,9 @@ class (Ord (LFTypeConst f), Ord (LFConst f), Ord (LFUVar f),
   withCurrentSolution :: ((?soln :: LFSoln f) => m x) -> m x
   commitSolution :: LFSoln f -> m ()
   lookupUVar :: Proxy f -> LFUVar f -> LFSoln f -> Maybe (f E TERM)
+  assignUVar :: Proxy f -> LFUVar f -> f E TERM -> LFSoln f -> m (LFSoln f)
   freshUVar :: f E TYPE -> m (LFUVar f)
-  extendSolution :: LFUVar f -> f E TERM -> LFSoln f -> m (Maybe (LFSoln f))
+  extendSolution :: LFUVar f -> f E TERM -> LFSoln f -> Maybe (LFSoln f)
 
   instantiate :: (?soln :: LFSoln f)
               => f γ s -> ChangeT m (f γ s)

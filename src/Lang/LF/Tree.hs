@@ -120,7 +120,7 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
   freeVar = freeVarLF
   varCensus = varCensusLF
 
-  kindView = kindViewLF WeakRefl 
+  kindView = kindViewLF WeakRefl
   typeView = typeViewLF WeakRefl
   termView = termViewLF WeakRefl
   goalView = goalViewLF WeakRefl
@@ -130,7 +130,8 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
     soln <- curSoln <$> get
     let ?soln = soln in (unM x)
   commitSolution soln = M $ modify (\s -> s{ curSoln = soln })
-  lookupUVar _ = Map.lookup 
+  lookupUVar _ = Map.lookup
+  assignUVar _ v m soln = return $ Map.insert v m soln
   uvarType u = M $ do
     tps <- uvarTypes <$> get
     case Map.lookup u tps of
@@ -143,10 +144,10 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
          , uvarTypes = Map.insert n tp $ uvarTypes s
          }
     return n
-  extendSolution u tm soln = M $ do
+  extendSolution u tm soln =
     case Map.lookup u soln of
-      Nothing -> return $ Just $ Map.insert u tm soln
-      Just _  -> return $ Nothing
+      Nothing -> Just $ Map.insert u tm soln
+      Just _  -> Nothing
 
   solve = solveLF
 

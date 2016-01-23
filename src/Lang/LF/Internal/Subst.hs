@@ -1,3 +1,5 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+
 module Lang.LF.Internal.Subst where
 
 import Data.Proxy
@@ -5,6 +7,7 @@ import Data.Proxy
 import Lang.LF.ChangeT
 import Lang.LF.Internal.Build
 import Lang.LF.Internal.Model
+import Lang.LF.Internal.Solve
 import Lang.LF.Internal.Weak
 
 weakSubst :: Weakening γ₁ γ₂
@@ -64,7 +67,7 @@ instantiateLF tm =
       case go r of
         Left _ -> Unchanged tm
         Right mr -> Changed $ do
-          ATerm r' <- unfoldLF <$> mr
+          r' <- extractATerm <$> mr
           foldLF (UnifyVar u r')
 
     Unify x y -> doUnify x y
@@ -77,19 +80,20 @@ instantiateLF tm =
     Sigma nm ty g -> onChange tm foldLF (Sigma nm <$> instantiate ty <*> instantiate g)
 
  where
+
   doUnify :: (s ~ CON) => f γ ATERM -> f γ ATERM -> ChangeT m (f γ CON)
   doUnify x y =
       case (go x, go y) of
         (Left _, Left _) -> Unchanged tm
         (Left x', Right my) -> Changed $ do
-          ATerm y' <- unfoldLF <$> my
+          y' <- extractATerm <$> my
           foldLF (Unify x' y')
         (Right mx, Left y') -> Changed $ do
-          ATerm x' <- unfoldLF <$> mx
+          x' <- extractATerm <$> mx
           foldLF (Unify x' y')
         (Right mx, Right my) -> Changed $ do
-          ATerm x' <- unfoldLF <$> mx
-          ATerm y' <- unfoldLF <$> my
+          x' <- extractATerm <$> mx
+          y' <- extractATerm <$> my
           foldLF (Unify x' y')
 
   go :: forall γ. f γ ATERM -> Either (f γ ATERM) (m (f γ TERM))
@@ -181,9 +185,8 @@ hsubstLF sub tm =
   sub' = SubstSkip sub
 
   f :: Either (f γ' TERM) (f γ' ATERM) -> m (f γ' ATERM)
-  f (Left (unfoldLF -> ATerm r)) = return r
+  f (Left r)  = return $ extractATerm r
   f (Right r) = return r
-  f _ = fail "hereditary substitution failed: expected ATERM result"
 
 {- FIXME? rewrite this in continuation passing form
     to avoid repeated matching on Either values. -}
