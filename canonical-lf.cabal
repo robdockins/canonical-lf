@@ -62,7 +62,10 @@ executable toyml
   hs-source-dirs: toyml
   main-is: Main.hs
   other-modules:
-    Lexer
+    Lexer,
+    Grammar,
+    Scope,
+    Ucps
   Build-tools:
     happy, alex >= 3.0.5
   build-depends:
@@ -88,6 +91,7 @@ executable toyml
     ImplicitParams
     LambdaCase
     MultiParamTypeClasses
+    OverloadedStrings
     PatternGuards
     PolyKinds
     RankNTypes

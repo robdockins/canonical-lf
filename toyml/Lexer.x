@@ -1,10 +1,14 @@
 {
+{-# LANGUAGE StandaloneDeriving #-}
 {-# OPTIONS_GHC -Wwarn #-}
 
 module Lexer
 ( alexMonadScan
 , Token(..)
+, AlexState(..)
+, Alex(..)
 , runlexer
+, initAlexState
 )where
 
 import Control.Monad
@@ -19,7 +23,9 @@ $alpha = [A-Z a-z]
 $lower = [a-z]
 $upper = [A-Z]
 $hexdigit = [$digit a-f A-F]
+$identchar = [$alpha $digit _ \']
 
+@ident = $alpha ($identchar)*
 
 tokens :-
 
@@ -30,23 +36,60 @@ tokens :-
 
 <0>  \(\*                            { pushComment }
 <0>  \*\)                            { popComment }
-<0>  [$white]+                       { skip }
-<0>  $lower [$alpha $digit \_]*      { raw }
-
-
+<0>  $white+                         { skip }
+<0>  "fn"                            { emit FN }
+<0>  "case"                          { emit CASE }
+<0>  "of"                            { emit OF }
+<0>  "end"                           { emit END }
+<0>  "inl"                           { emit INL }
+<0>  "inr"                           { emit INR }
+<0>  "fst"                           { emit FST }
+<0>  "snd"                           { emit SND }
+<0>  "let"                           { emit LET }
+<0>  "in"                            { emit IN }
+<0>  "()"                            { emit TT }
+<0>  "=>"                            { emit FATARROW }
+<0>  "->"                            { emit ARROW }
+<0>  "="                             { emit EQUAL }
+<0>  "|"                             { emit VBAR }
+<0>  ","                             { emit COMMA }
+<0>  "("                             { emit LPAREN }
+<0>  ")"                             { emit RPAREN }
+<0>  @ident                          { ident }
 
 {
 data Token
-  = Raw String
+  = IDENT String
+  | FN
+  | CASE
+  | OF
+  | LET
+  | IN
+  | END
+  | INL
+  | INR
+  | FST
+  | SND
+  | VBAR
+  | ARROW
+  | COMMA
+  | FATARROW
+  | EQUAL
+  | LPAREN
+  | RPAREN
+  | TT
   | EOF
  deriving Show
+
+emit :: Token -> AlexAction Token
+emit t _ _ = return t
 
 type AlexUserState = Int -- Comment depth
 alexInitUserState = 0
 
-raw :: AlexAction Token
-raw (_,_,_,str) _len =
-   return $ Raw str
+ident :: AlexAction Token
+ident (_,_,_,str) len =
+    return $ IDENT (take len str)
 
 pushComment :: AlexAction Token
 pushComment _ _ = do
@@ -98,4 +141,5 @@ runlexer str = go (initAlexState str)
 		Right (st',EOF) -> []
 		Right (st',tok) -> tok : go st'
 
+deriving instance Show AlexState
 }
