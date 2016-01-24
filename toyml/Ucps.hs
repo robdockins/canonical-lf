@@ -127,7 +127,7 @@ cps_ml (termView -> VConst (CNm "ml_var") [x]) k_top =
   (return k_top) @@ (return x)
 
 cps_ml (termView -> VConst "ml_tt" []) k_top =
-  "letval" @@ "tm_tt" @@ (return $ k_top)
+  "letval" @@ "tt" @@ (return $ k_top)
 
 cps_ml (termView -> VConst "ml_app" [e1,e2]) k_top =
  "letcont" @@ (return k_top)
@@ -228,6 +228,12 @@ tailcps_ml (termView -> VConst "ml_pair" [e1,e2]) k_top =
 tailcps_ml (termView -> VConst "ml_inl" [e]) k_top =
   cps_ml e =<< (λ "z" v $ \z ->
      "letval" @@ ("inl" @@ var z)
+              @@ (λ "x" v $ \x ->
+                    "enter" @@ (return $ weak $ weak k_top) @@ var x))
+
+tailcps_ml (termView -> VConst "ml_inr" [e]) k_top =
+  cps_ml e =<< (λ "z" v $ \z ->
+     "letval" @@ ("inr" @@ var z)
               @@ (λ "x" v $ \x ->
                     "enter" @@ (return $ weak $ weak k_top) @@ var x))
 
