@@ -1,16 +1,41 @@
 import           System.IO
---import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
+import qualified Data.Map as Map
+import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
---import           Ucps
+import           Ucps
 import           Lexer
+import           Grammar
+import           Scope
 
---import           Lang.LF
---import           Lang.LF.Tree hiding (M)
+import           Lang.LF
+import           Lang.LF.Tree hiding (M)
 
 main :: IO ()
 main = do
   str <- hGetContents stdin
   print $ runlexer str
+  let (errs, mast) = toyMLParser "<stdin>" str
+  print (errs, mast)
+  case mast of
+    Nothing -> putStrLn "Parse failed"
+    Just ast -> inEmptyCtx $ do
+      let mlTerm  = mkTerm sig $ scopeAnalysis Map.empty ast
+      let cpsTerm = mkTerm sig $ tailcps_ml mlTerm =<< "halt"
+      let x       = mkTerm sig $ simplifier BindEmpty cpsTerm
+
+      showTm mlTerm
+      showTm cpsTerm
+      showTm x
+
+showTm :: LF E TERM -> IO ()
+showTm x = inEmptyCtx $ do
+   displayIO stdout $ renderSmart 0.7 80 $ runM sig $
+      ppLF TopPrec WeakRefl x
+   putStrLn ""
+   displayIO stdout $ renderSmart 0.7 80 $ runM sig $
+      (ppLF TopPrec WeakRefl =<< inferType WeakRefl x)
+   putStrLn ""
+
 
 -- main = inEmptyCtx $ do
    -- let x :: LF E TERM
