@@ -1,5 +1,8 @@
 module Lang.LF.Internal.Basics where
 
+import           Data.Set (Set)
+import qualified Data.Set as Set
+
 import Lang.LF.Internal.Model
 import Lang.LF.Internal.Weak
 
@@ -107,3 +110,30 @@ foldFree merge z = go
       Goal m c -> go f m `merge` go f c
       Fail -> z
       UVar _ -> z
+
+freeUVarsLF :: LFModel f m
+            => f γ s
+            -> Set (LFUVar f)
+freeUVarsLF tm =
+  case unfoldLF tm of
+    Weak _ x -> freeUVars x
+    Type -> Set.empty
+    KPi _ a k -> Set.union (freeUVars a) (freeUVars k)
+    AType x -> freeUVars x
+    TyPi _ a1 a2 -> Set.union (freeUVars a1) (freeUVars a2)
+    TyConst _ -> Set.empty
+    TyApp p a -> Set.union (freeUVars p) (freeUVars a)
+    Lam _ a m -> Set.union (freeUVars a) (freeUVars m)
+    Const _ -> Set.empty
+    ATerm x -> freeUVars x
+    App r m -> Set.union (freeUVars r) (freeUVars m)
+    Var -> Set.empty
+    Unify r1 r2 -> Set.union (freeUVars r1) (freeUVars r2)
+    UnifyVar v r -> Set.insert v (freeUVars r)
+    And cs -> Set.unions (map freeUVars cs)
+    Forall _ a c -> Set.union (freeUVars a) (freeUVars c)
+    Exists _ a c -> Set.union (freeUVars a) (freeUVars c)
+    Sigma _ a g -> Set.union (freeUVars a) (freeUVars g)
+    Goal m c -> Set.union (freeUVars m) (freeUVars c)
+    Fail -> Set.empty
+    UVar v -> Set.singleton v

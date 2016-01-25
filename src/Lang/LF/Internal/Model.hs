@@ -158,6 +158,18 @@ data Subst f :: Ctx * -> Ctx * -> * where
   SubstWeak  :: Weakening γ₁ γ₂ -> Subst f γ₂ γ₃ -> Subst f γ₁ γ₃
   SubstSkip  :: Subst f γ γ' -> Subst f (γ ::> b) (γ' ::> b)
 
+
+-- | An abstraction is a bit lit a substituion in reverse;
+--   it lists a sequence of unification variables that
+--   are to be replaced by regular deBruijn variables.
+data Abstraction f :: Ctx * -> Ctx * -> * where
+  AbstractRefl  :: Abstraction f γ γ
+  AbstractApply :: Abstraction f γ γ'
+                -> LFUVar f
+                -> Abstraction f γ (γ'::>b)
+  AbstractSkip  :: Abstraction f γ γ'
+                -> Abstraction f (γ::>b) (γ'::>b)
+
 -- | This datastructure represents the ways a canonical LF kind can be viewed.
 --   A kind is either the constant 'type' or a Π binder.
 data KindView f m γ where
@@ -285,6 +297,7 @@ class (Ord (LFTypeConst f), Ord (LFConst f), Ord (LFUVar f),
   alphaEq      :: (?soln :: LFSoln f) => f γ s -> f γ s -> Bool
   varCensus    :: (?soln :: LFSoln f) => Var γ -> f γ s -> Int
   freeVar      :: (?soln :: LFSoln f) => Var γ -> f γ s -> Bool
+  freeUVars    :: f γ s -> Set (LFUVar f)
 
   constKind :: LFTypeConst f -> m (f E KIND)
   constType :: LFConst f -> m (f E TYPE)
@@ -319,5 +332,9 @@ class (Ord (LFTypeConst f), Ord (LFConst f), Ord (LFUVar f),
 
   instantiate :: (?soln :: LFSoln f)
               => f γ s -> ChangeT m (f γ s)
+
+  abstractUVars :: Abstraction f γ γ'
+                -> f γ s
+                -> m (f γ' s)
 
   solve :: f E CON -> m (f E CON, LFSoln f)

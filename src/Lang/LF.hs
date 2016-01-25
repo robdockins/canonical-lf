@@ -35,6 +35,9 @@ module Lang.LF
 , mapF
 , freeVar
 , varCensus
+, freeUVars
+, Abstraction(..)
+, abstractUVars
 
   -- * Term views
 , KindView(..)

@@ -110,11 +110,6 @@ substWeak :: Subst f γ₂ γ₃
 substWeak s WeakRefl k = k WeakRefl s
 substWeak SubstRefl w k = k w SubstRefl
 
-substWeak s (WeakL w) k =
-  substWeak s w $ \w' s' ->
-    substWeak s' (WeakR WeakRefl) $ \w'' s'' ->
-      k (weakTrans w'' w') s''
-
 substWeak (SubstWeak w s) w' k =
   substWeak s (weakTrans w' w) k
 
@@ -129,3 +124,41 @@ substWeak (SubstApply s _f) (WeakR w) k =
   substWeak s w k
 substWeak (SubstApply s f) (WeakSkip w) k =
   k WeakRefl (SubstApply (SubstWeak w s) f)
+
+substWeak s (WeakL w) k =
+  substWeak s w $ \w' s' ->
+    substWeak s' (WeakR WeakRefl) $ \w'' s'' ->
+      k (weakTrans w'' w') s''
+
+abstractWeak :: Abstraction f γ₂ γ₃
+             -> Weakening γ₁ γ₂
+             -> (forall γ'
+                  . Weakening γ' γ₃
+                 -> Abstraction f γ₁ γ'
+                 -> x)
+             -> x
+abstractWeak AbstractRefl w k = k w AbstractRefl
+abstractWeak a WeakRefl k = k WeakRefl a
+
+abstractWeak (AbstractApply a u) w k =
+  abstractWeak a w $ \w' a' ->
+    k (WeakSkip w') (AbstractApply a' u)
+
+abstractWeak (AbstractSkip a) (WeakSkip w) k =
+  abstractWeak a w $ \w' a' ->
+    k (WeakSkip w') (AbstractSkip a')
+abstractWeak (AbstractSkip a) (WeakR w) k =
+  abstractWeak a w $ \w' a' ->
+    k (WeakR w') a'
+
+abstractWeak a (WeakL w) k =
+  abstractWeak a w $ \w' a' ->
+    abstractWeak a' (WeakR WeakRefl) $ \w'' a'' ->
+      k (weakTrans w'' w') a''
+
+absWeaken :: Abstraction f γ γ'
+          -> Weakening γ γ'
+absWeaken AbstractRefl = WeakRefl
+absWeaken (AbstractApply a _) = WeakR (absWeaken a)
+absWeaken (AbstractSkip a) = WeakSkip (absWeaken a)
+

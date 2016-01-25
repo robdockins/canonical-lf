@@ -34,6 +34,8 @@ strengthen =
              SubstRefl
              (error "Cannot strengthen; variable occurs free"))
 
+
+
 instantiateLF :: forall f m γ s
           . (LFModel f m, ?soln :: LFSoln f)
          => f γ s
@@ -116,6 +118,80 @@ instantiateLF tm =
         | otherwise -> Left atm
 
 
+absUVar :: LFModel f m
+        => Abstraction f γ γ'
+        -> LFUVar f
+        -> Maybe (Var γ')
+absUVar AbstractRefl _u =
+  Nothing
+absUVar (AbstractSkip a) u =
+  fmap F (absUVar a u)
+absUVar (AbstractApply a u') u =
+  if u == u' then
+    Just B
+  else
+    fmap F (absUVar a u)
+
+
+abstractLF :: forall f m s γ γ'
+            . (LFModel f m)
+           => Abstraction f γ γ'
+           -> f γ s
+           -> m (f γ' s)
+abstractLF AbstractRefl tm = return tm
+abstractLF abs tm =
+  case unfoldLF tm of
+    Weak w x -> abstractWeak abs w $ \w' abs' ->
+                  weaken w' <$> abstractUVars abs' x
+
+    Type -> foldLF Type
+    KPi nm a k -> foldLF =<< (KPi nm <$> abstractUVars abs a <*> abstractUVars abs' k)
+
+    AType x      -> foldLF =<< (AType <$> abstractUVars abs x)
+    TyPi nm a a' -> foldLF =<< (TyPi nm <$> abstractUVars abs a <*> abstractUVars abs' a')
+
+    TyConst _ -> return $ weaken (absWeaken abs) tm
+
+    TyApp p m    -> foldLF =<< (TyApp <$> abstractUVars abs p <*> abstractUVars abs m)
+    Lam nm a m   -> foldLF =<< (Lam nm <$> abstractUVars abs a <*> abstractUVars abs' m)
+
+    And cs       -> foldLF . And =<< (mapM (abstractUVars abs) cs)
+
+    Unify r1 r2  -> do
+       r1' <- abstractUVars abs r1
+       r2' <- abstractUVars abs r2
+       foldLF (Unify r1' r2')
+
+    UnifyVar u r -> do
+         r' <- abstractUVars abs r
+         case absUVar abs u of
+           Just v -> do
+             v' <- var0 v WeakRefl
+             foldLF (Unify v' r')
+           Nothing ->
+             foldLF (UnifyVar u r')
+
+    Forall nm a c -> foldLF =<< (Forall nm <$> abstractUVars abs a <*> abstractUVars abs' c)
+    Exists nm a c -> foldLF =<< (Exists nm <$> abstractUVars abs a <*> abstractUVars abs' c)
+
+    Sigma nm a g  -> foldLF =<< (Sigma nm <$> abstractUVars abs a <*> abstractUVars abs' g)
+    Goal m c      -> foldLF =<< (Goal <$> abstractUVars abs m <*> abstractUVars abs c)
+    Fail          -> foldLF Fail
+
+    ATerm x      -> foldLF =<< (ATerm <$> abstractUVars abs x)
+    Const _      -> return $ weaken (absWeaken abs) tm
+
+    Var          -> return $ weaken (absWeaken abs) tm
+    App x y      -> foldLF =<< (App <$> abstractUVars abs x <*> abstractUVars abs y)
+    UVar u ->
+      case absUVar abs u of
+        Just v ->
+          var0 v WeakRefl
+        Nothing ->
+          return $ weaken (absWeaken abs) tm
+
+ where abs' :: forall b. Abstraction f (γ::>b) (γ'::>b)
+       abs' = AbstractSkip abs
 
 
 hsubstLF :: forall f m s γ γ'

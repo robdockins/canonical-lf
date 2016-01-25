@@ -119,6 +119,7 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
 
   freeVar = freeVarLF
   varCensus = varCensusLF
+  freeUVars = freeUVarsLF
 
   kindView = kindViewLF WeakRefl
   typeView = typeViewLF WeakRefl
@@ -152,6 +153,7 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
   solve = solveLF
 
   instantiate = instantiateLF
+  abstractUVars = abstractLF
 
 {-
 dumpContextLF :: (Ord a, Ord c, Pretty a, Pretty c) => M a c Doc
