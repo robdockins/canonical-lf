@@ -58,6 +58,8 @@ sig = buildSignature
   , "ml"       ::. lf_type
   , "v"        ::. lf_type
   , "kv"       ::. lf_type
+  , "ty"       ::. lf_type
+  , "scheme"   ::. lf_type
 
   , "letval"   :. val ==> (v ==> tm) ==> tm
   , "letcont"  :. (v ==> tm) ==> (kv ==> tm) ==> tm
@@ -85,6 +87,15 @@ sig = buildSignature
   , "ml_letval" :. ml ==> (v ==> ml) ==> ml
   , "ml_case"   :. ml ==> (v ==> ml) ==> (v ==> ml) ==> ml
 
+  , "unit"      :. ty
+  , "arr"       :. ty ==> ty ==> ty
+  , "prod"      :. ty ==> ty ==> ty
+  , "sum"       :. ty ==> ty ==> ty
+
+  , "sch_ty"     :. ty ==> scheme
+  , "sch_forall" :. (ty ==> scheme) ==> scheme
+
+  , "tt_CAF" :. v
   , "f" :. v
   , "g" :. v
   , "g'" :. v
@@ -117,7 +128,11 @@ kv = tyConst "kv"
 ml :: LiftClosed γ => M (LF γ TYPE)
 ml = tyConst "ml"
 
+ty :: LiftClosed γ => M (LF γ TYPE)
+ty = tyConst "ty"
 
+scheme :: LiftClosed γ => M (LF γ TYPE)
+scheme = tyConst "scheme"
 
 cps_ml :: (LiftClosed γ, ?nms :: Set String, ?hyps :: H γ, ?soln :: LFSoln LF)
        => LF γ TERM -- ^ ML term to transform  :: ml
@@ -292,6 +307,7 @@ data BindData (γ :: Ctx *) where
   BindOpaque  :: BindData γ
               -> BindData (γ ::> b)
   BindLetval  :: BindData γ
+              -> Bool -- Has at most one occurance?
               -> LF γ TERM {- :: val  -}
               -> BindData (γ ::> b)
   BindLetproj :: BindData γ
@@ -306,21 +322,21 @@ lookupContData = go WeakRefl
  where go :: Weakening γ γ' -> BindData γ -> Var γ -> Maybe (LF γ' TERM)
        go w (BindLetcont bd _)   (F v) = go (WeakL w) bd v
        go w (BindOpaque bd)      (F v) = go (WeakL w) bd v
-       go w (BindLetval  bd _)   (F v) = go (WeakL w) bd v
+       go w (BindLetval  bd _ _) (F v) = go (WeakL w) bd v
        go w (BindLetproj bd _ _) (F v) = go (WeakL w) bd v
        go w (BindLetcont  _ v)   B     = Just (weaken (WeakL w) v)
        go _ _                    _     = Nothing
 
 lookupValData :: BindData γ
               -> Var γ
-              -> Maybe (LF γ TERM)
+              -> Maybe (Bool, LF γ TERM)
 lookupValData = go WeakRefl
- where go :: Weakening γ γ' -> BindData γ -> Var γ -> Maybe (LF γ' TERM)
+ where go :: Weakening γ γ' -> BindData γ -> Var γ -> Maybe (Bool, LF γ' TERM)
        go w (BindLetcont bd _)   (F v) = go (WeakL w) bd v
        go w (BindOpaque bd)      (F v) = go (WeakL w) bd v
-       go w (BindLetval  bd _)   (F v) = go (WeakL w) bd v
+       go w (BindLetval  bd _ _) (F v) = go (WeakL w) bd v
        go w (BindLetproj bd _ _) (F v) = go (WeakL w) bd v
-       go w (BindLetval  _  v) B     = Just (weaken (WeakL w) v)
+       go w (BindLetval _ lin v) B     = Just (lin, weaken (WeakL w) v)
        go _ _                  _     = Nothing
 
 lookupProjData :: BindData γ
@@ -330,7 +346,7 @@ lookupProjData = go WeakRefl
  where go :: Weakening γ γ' -> BindData γ -> Var γ -> Maybe (Bool, LF γ' TERM)
        go w (BindLetcont bd _)   (F v) = go (WeakL w) bd v
        go w (BindOpaque bd)      (F v) = go (WeakL w) bd v
-       go w (BindLetval  bd _)   (F v) = go (WeakL w) bd v
+       go w (BindLetval  bd _ _) (F v) = go (WeakL w) bd v
        go w (BindLetproj bd _ _) (F v) = go (WeakL w) bd v
        go w (BindLetproj _ b v)  B     = Just (b, weaken (WeakL w) v)
        go _ _                    _     = Nothing
@@ -346,10 +362,10 @@ dropData v n bd
  where go :: BindData γ -> Var γ -> BindData γ
        go (BindLetcont bd k)   (F v) = BindLetcont (go bd v) k
        go (BindOpaque bd)      (F v) = BindOpaque (go bd v)
-       go (BindLetval bd val)  (F v) = BindLetval (go bd v) val
+       go (BindLetval bd lin val) (F v) = BindLetval (go bd v) lin val
        go (BindLetproj bd x y) (F v) = BindLetproj (go bd v) x y
        go (BindLetcont bd _)   B     = BindOpaque bd
-       go (BindLetval bd _)    B     = BindOpaque bd
+       go (BindLetval bd _ v)  B     = BindLetval bd False v
        go (BindLetproj bd _ _) B     = BindOpaque bd
        go bd                   _     = bd
 
@@ -387,8 +403,7 @@ simplifier bd (termView -> VConst "letcont" [k,m]) = do
         case termView m of
             VLam nm x t m' -> do
               q <- if (varCensus x m' == 1) then do
-                      Debug.trace ("β-CONT-LIN " ++ show (varCensus x m')) $
-                        simplifier (BindLetcont bd k') m'
+                      simplifier (BindLetcont bd k') m'
                    else
                       Debug.trace ("CONT multiple occur: " ++ show (varCensus x m')) $
                         simplifier (BindOpaque bd) m'
@@ -445,16 +460,17 @@ simplifier bd (termView -> VConst "letval" [v,m]) = do
                            _ -> bd
                simplifier bd' m'
 
+     -- η-UNIT rule.  Replace every let-binding of tt with a distinguished
+     -- variable standing for the constant unit value
+     VConst "tt" [] ->
+       Debug.trace "η-UNIT" $ do
+         simplifier bd =<< (return m) @@ "tt_CAF"
+
      -- otherwise, recurse
      _ -> case termView m of
             VLam nm x t m' -> do
-              q <- if (varCensus x m' == 1) then
-                     Debug.trace "β-FUN-LIN" $ do
-                      let bd' = BindLetval bd v
-                      simplifier bd' m'
-                   else do
-                     let bd' = BindOpaque bd
-                     simplifier bd' m'
+              q <- let bd' = BindLetval bd (varCensus x m' <= 1) v in
+                   simplifier bd' m'
               -- DEAD-val remove dead code if the 'letval' variable is now unused
               if freeVar x q then
                   "letval" @@ return v @@ mkLam nm x t q
@@ -469,7 +485,7 @@ simplifier bd (termView -> VConst "let_prj1" [v, m]) = do
    case termView v of
      -- β-PAIR1 rule
      VVar v' []
-       | Just (termView -> VConst "pair" [x,_]) <- lookupValData bd v' ->
+       | Just (_, termView -> VConst "pair" [x,_]) <- lookupValData bd v' ->
            Debug.trace "β-PAIR1" $ do
              m' <- return m @@ return x
              let bd' = case termView x of
@@ -493,7 +509,7 @@ simplifier bd (termView -> VConst "let_prj2" [ v, m]) = do
    case termView v of
      -- β-PAIR2 rule
      VVar v' []
-       | Just (termView -> VConst "pair" [_,y]) <- lookupValData bd v' ->
+       | Just (_, termView -> VConst "pair" [_,y]) <- lookupValData bd v' ->
            Debug.trace "β-PAIR2" $ do
              m' <- return m @@ return y
              let bd' = case termView y of
@@ -523,7 +539,7 @@ simplifier bd (termView -> VConst "enter" [termView -> VVar kv [], x])
           simplifier bd' cont'
 
 simplifier bd (termView -> VConst "app" [ termView -> VVar f [], j, y])
-  | Just (termView -> VConst "lam" [m]) <- lookupValData bd f =
+  | Just (True, termView -> VConst "lam" [m]) <- lookupValData bd f =
      Debug.trace "β-FUN" $ do
         m' <- return m @@ return j @@ return y
         let bd' =
@@ -541,10 +557,10 @@ simplifier bd m@(termView -> VConst "case" [e,l,r]) = do
      VVar e' []
         -- β-CASE rules.  If we case on an 'inl' or 'inr' value, simply
         -- enter the correct continuation.
-        | Just (termView -> VConst "inl" [x]) <- lookupValData bd e' ->
+        | Just (_, termView -> VConst "inl" [x]) <- lookupValData bd e' ->
             Debug.trace "β-CASE-L" $
               simplifier bd =<< "enter" @@ return l @@ return x
-        | Just (termView -> VConst "inr" [x]) <- lookupValData bd e' ->
+        | Just (_, termView -> VConst "inr" [x]) <- lookupValData bd e' ->
             Debug.trace "β-CASE-R" $
              simplifier bd =<< "enter" @@ return r @@ return x
 

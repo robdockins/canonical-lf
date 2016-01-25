@@ -65,6 +65,7 @@ executable toyml
     Lexer,
     Grammar,
     Scope,
+    ToyTC,
     Ucps
   Build-tools:
     happy, alex >= 3.0.5

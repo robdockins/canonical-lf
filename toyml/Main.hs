@@ -5,6 +5,7 @@ import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 import           Ucps
 import           Lexer
 import           Grammar
+import           ToyTC
 import           Scope
 
 import           Lang.LF
@@ -20,12 +21,20 @@ main = do
     Nothing -> putStrLn "Parse failed"
     Just ast -> inEmptyCtx $ do
       let mlTerm  = mkTerm sig $ scopeAnalysis Map.empty ast
+      let g       = runM sig $ inEmptyCtx $ runTC mlTerm
       let cpsTerm = mkTerm sig $ tailcps_ml mlTerm =<< "halt"
       let x       = mkTerm sig $ simplifier BindEmpty cpsTerm
 
       showTm mlTerm
+      showGoal g
       showTm cpsTerm
       showTm x
+
+showGoal :: LF E GOAL -> IO ()
+showGoal g = inEmptyCtx $ do
+   displayIO stdout $ renderSmart 0.7 80 $ runM sig $
+      ppLF TopPrec WeakRefl g
+   putStrLn ""
 
 showTm :: LF E TERM -> IO ()
 showTm x = inEmptyCtx $ do
