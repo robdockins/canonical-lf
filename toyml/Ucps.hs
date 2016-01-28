@@ -308,6 +308,7 @@ data BindData (γ :: Ctx *) where
               -> BindData (γ ::> b)
   BindLetval  :: BindData γ
               -> Bool -- Has at most one occurance?
+              -> Bool -- Is cheap?
               -> LF γ TERM {- :: val  -}
               -> BindData (γ ::> b)
   BindLetproj :: BindData γ
@@ -320,23 +321,23 @@ lookupContData :: BindData γ
                -> Maybe (LF γ TERM)
 lookupContData = go WeakRefl
  where go :: Weakening γ γ' -> BindData γ -> Var γ -> Maybe (LF γ' TERM)
-       go w (BindLetcont bd _)   (F v) = go (WeakL w) bd v
-       go w (BindOpaque bd)      (F v) = go (WeakL w) bd v
-       go w (BindLetval  bd _ _) (F v) = go (WeakL w) bd v
-       go w (BindLetproj bd _ _) (F v) = go (WeakL w) bd v
-       go w (BindLetcont  _ v)   B     = Just (weaken (WeakL w) v)
-       go _ _                    _     = Nothing
+       go w (BindLetcont bd _)     (F v) = go (WeakL w) bd v
+       go w (BindOpaque bd)        (F v) = go (WeakL w) bd v
+       go w (BindLetval  bd _ _ _) (F v) = go (WeakL w) bd v
+       go w (BindLetproj bd _ _)   (F v) = go (WeakL w) bd v
+       go w (BindLetcont  _ v)     B     = Just (weaken (WeakL w) v)
+       go _ _                      _     = Nothing
 
 lookupValData :: BindData γ
               -> Var γ
-              -> Maybe (Bool, LF γ TERM)
+              -> Maybe (Bool, Bool, LF γ TERM)
 lookupValData = go WeakRefl
- where go :: Weakening γ γ' -> BindData γ -> Var γ -> Maybe (Bool, LF γ' TERM)
+ where go :: Weakening γ γ' -> BindData γ -> Var γ -> Maybe (Bool, Bool, LF γ' TERM)
        go w (BindLetcont bd _)   (F v) = go (WeakL w) bd v
        go w (BindOpaque bd)      (F v) = go (WeakL w) bd v
-       go w (BindLetval  bd _ _) (F v) = go (WeakL w) bd v
+       go w (BindLetval  bd _ _ _) (F v) = go (WeakL w) bd v
        go w (BindLetproj bd _ _) (F v) = go (WeakL w) bd v
-       go w (BindLetval _ lin v) B     = Just (lin, weaken (WeakL w) v)
+       go w (BindLetval _ lin cheap val) B     = Just (lin, cheap, weaken (WeakL w) val)
        go _ _                  _     = Nothing
 
 lookupProjData :: BindData γ
@@ -346,7 +347,7 @@ lookupProjData = go WeakRefl
  where go :: Weakening γ γ' -> BindData γ -> Var γ -> Maybe (Bool, LF γ' TERM)
        go w (BindLetcont bd _)   (F v) = go (WeakL w) bd v
        go w (BindOpaque bd)      (F v) = go (WeakL w) bd v
-       go w (BindLetval  bd _ _) (F v) = go (WeakL w) bd v
+       go w (BindLetval  bd _ _ _) (F v) = go (WeakL w) bd v
        go w (BindLetproj bd _ _) (F v) = go (WeakL w) bd v
        go w (BindLetproj _ b v)  B     = Just (b, weaken (WeakL w) v)
        go _ _                    _     = Nothing
@@ -362,20 +363,24 @@ dropData v n bd
  where go :: BindData γ -> Var γ -> BindData γ
        go (BindLetcont bd k)   (F v) = BindLetcont (go bd v) k
        go (BindOpaque bd)      (F v) = BindOpaque (go bd v)
-       go (BindLetval bd lin val) (F v) = BindLetval (go bd v) lin val
+       go (BindLetval bd lin cheap val) (F v) = BindLetval (go bd v) lin cheap val
        go (BindLetproj bd x y) (F v) = BindLetproj (go bd v) x y
        go (BindLetcont bd _)   B     = BindOpaque bd
-       go (BindLetval bd _ v)  B     = BindLetval bd False v
+       go (BindLetval bd _ cheap val)  B     = BindLetval bd False cheap val
        go (BindLetproj bd _ _) B     = BindOpaque bd
        go bd                   _     = bd
 
-strengthenVar :: Weakening γ γ'
-              -> Var γ'
-              -> Maybe (Var γ)
-strengthenVar = undefined
+
+newtype InlineHeuristic
+  = InlineHeuristic
+      { applyHeuristic :: forall γ. LF γ TERM -> Bool }
 
 simplifier :: forall γ
-            . (LiftClosed γ, ?hyps :: H γ, ?nms :: Set String, ?soln :: LFSoln LF)
+            . (LiftClosed γ
+              , ?hyps :: H γ, ?nms :: Set String
+              , ?soln :: LFSoln LF
+              , ?ischeap :: InlineHeuristic
+              )
            => BindData γ
            -> LF γ TERM
            -> M (LF γ TERM)
@@ -429,7 +434,10 @@ simplifier bd (termView -> VConst "letcont" [k,m]) = do
                _ -> Nothing
        tryEtaCont _ = Nothing
 
-simplifier bd (termView -> VConst "letval" [v,m]) = do
+simplifier bd (termView -> VConst "letval" [v0,m]) = do
+   -- first simplify the value
+   v <- simplifyVal bd v0
+
    let hyps = ?hyps
    case termView v of
      -- η-FUN rule.  If the bound value is just an η-expanded 'g', then replace
@@ -469,7 +477,9 @@ simplifier bd (termView -> VConst "letval" [v,m]) = do
      -- otherwise, recurse
      _ -> case termView m of
             VLam nm x t m' -> do
-              q <- let bd' = BindLetval bd (varCensus x m' <= 1) v in
+              q <- let bd' = BindLetval bd (varCensus x m' <= 1)
+                                           (applyHeuristic ?ischeap v)
+                                           v in
                    simplifier bd' m'
               -- DEAD-val remove dead code if the 'letval' variable is now unused
               if freeVar x q then
@@ -485,7 +495,7 @@ simplifier bd (termView -> VConst "let_prj1" [v, m]) = do
    case termView v of
      -- β-PAIR1 rule
      VVar v' []
-       | Just (_, termView -> VConst "pair" [x,_]) <- lookupValData bd v' ->
+       | Just (_, _, termView -> VConst "pair" [x,_]) <- lookupValData bd v' ->
            Debug.trace "β-PAIR1" $ do
              m' <- return m @@ return x
              let bd' = case termView x of
@@ -509,7 +519,7 @@ simplifier bd (termView -> VConst "let_prj2" [ v, m]) = do
    case termView v of
      -- β-PAIR2 rule
      VVar v' []
-       | Just (_, termView -> VConst "pair" [_,y]) <- lookupValData bd v' ->
+       | Just (_, _, termView -> VConst "pair" [_,y]) <- lookupValData bd v' ->
            Debug.trace "β-PAIR2" $ do
              m' <- return m @@ return y
              let bd' = case termView y of
@@ -539,7 +549,8 @@ simplifier bd (termView -> VConst "enter" [termView -> VVar kv [], x])
           simplifier bd' cont'
 
 simplifier bd (termView -> VConst "app" [ termView -> VVar f [], j, y])
-  | Just (True, termView -> VConst "lam" [m]) <- lookupValData bd f =
+  | Just (lin, cheap, termView -> VConst "lam" [m]) <- lookupValData bd f
+  , lin || cheap =
      Debug.trace "β-FUN" $ do
         m' <- return m @@ return j @@ return y
         let bd' =
@@ -557,10 +568,10 @@ simplifier bd m@(termView -> VConst "case" [e,l,r]) = do
      VVar e' []
         -- β-CASE rules.  If we case on an 'inl' or 'inr' value, simply
         -- enter the correct continuation.
-        | Just (_, termView -> VConst "inl" [x]) <- lookupValData bd e' ->
+        | Just (_, _, termView -> VConst "inl" [x]) <- lookupValData bd e' ->
             Debug.trace "β-CASE-L" $
               simplifier bd =<< "enter" @@ return l @@ return x
-        | Just (_, termView -> VConst "inr" [x]) <- lookupValData bd e' ->
+        | Just (_, _, termView -> VConst "inr" [x]) <- lookupValData bd e' ->
             Debug.trace "β-CASE-R" $
              simplifier bd =<< "enter" @@ return r @@ return x
 
@@ -597,6 +608,26 @@ simplifier bd m@(termView -> VConst "case" [e,l,r]) = do
 -- No other rule applies, just return the term
 simplifier _ m = return m
 
+
+simplifyVal :: forall γ
+            . (LiftClosed γ, ?hyps :: H γ, ?nms :: Set String
+              , ?soln :: LFSoln LF
+              , ?ischeap :: InlineHeuristic
+              )
+            => BindData γ
+            -> LF γ TERM
+            -> M (LF γ TERM)
+-- Simplify inside the body of lambdas
+simplifyVal bd (termView -> VConst "lam"
+                             [termView -> VLam jnm j jt
+                               (termView -> VLam xnm x xt m)
+                             ]) = do
+   let bd' = BindOpaque (BindOpaque bd)
+   m' <- simplifier bd' m
+   "lam" @@ (mkLam jnm j jt =<< mkLam xnm x xt m')
+
+-- otherwise return the term unchanged
+simplifyVal _ m = return m
 
 
 --  "letval" @@ "tt" @@ (λ "x" v $ \x -> "tm_var" @@ var x)
@@ -638,6 +669,6 @@ cpsTerm = mkTerm sig $ do
 
 simplTerm :: LF E TERM
 simplTerm = mkTerm sig $ do
-  Debug.trace "run simplifier" $
-     simplifier BindEmpty cpsTerm
+  let ?ischeap = InlineHeuristic (\_ -> False)
+  simplifier BindEmpty cpsTerm
 

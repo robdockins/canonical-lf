@@ -72,6 +72,12 @@ generalize
    => Subst LF γ E
    -> LF E TERM
    -> StateT [LF E CON] M (LF E TERM, LFSoln LF)
+{-
+generalize _ t = do
+    x <- lift ("sch_ty" @@ return t)
+    Debug.trace "no generalization" $
+      return (x, ?soln)
+-}
 generalize sub t = do
   cs <- get
   (c',soln') <- lift (solve =<< conj (map return cs))

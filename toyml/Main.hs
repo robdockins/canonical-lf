@@ -23,7 +23,9 @@ main = do
       let mlTerm  = mkTerm sig $ scopeAnalysis Map.empty ast
       let g       = runM sig $ inEmptyCtx $ runTC mlTerm
       let cpsTerm = mkTerm sig $ tailcps_ml mlTerm =<< "halt"
-      let x       = mkTerm sig $ simplifier BindEmpty cpsTerm
+      let x       = mkTerm sig $ do
+                      let ?ischeap = InlineHeuristic (\_ -> True)
+                      simplifier BindEmpty cpsTerm
 
       showTm mlTerm
       showGoal g
@@ -44,13 +46,4 @@ showTm x = inEmptyCtx $ do
    displayIO stdout $ renderSmart 0.7 80 $ runM sig $
       (ppLF TopPrec WeakRefl =<< inferType WeakRefl x)
    putStrLn ""
-
-
--- main = inEmptyCtx $ do
-   -- let x :: LF E TERM
-   --     x = simplTerm
-   -- displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec WeakRefl x
-   -- putStrLn ""
-   -- displayIO stdout $ renderSmart 0.7 80 $ runM sig $ (ppLF TopPrec WeakRefl =<< inferType WeakRefl x)
-   -- putStrLn ""
 
