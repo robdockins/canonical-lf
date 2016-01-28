@@ -10,7 +10,7 @@ extractATerm :: forall f m γ. LFModel f m => f γ TERM -> f γ ATERM
 extractATerm = go WeakRefl
  where
   go :: forall γ γ'. Weakening γ γ' -> f γ TERM -> f γ' ATERM
-  go w x = 
+  go w x =
     case unfoldLF x of
       Weak w' x' -> go (weakTrans w' w) x'
       ATerm r    -> weaken w r
@@ -58,28 +58,14 @@ doSolve c soln =
         Nothing -> Changed $ do
             soln' <- assignUVar (Proxy :: Proxy f) u m soln
             return (Just [], soln')
-        Just m' -> Changed $ do
-            let ?soln = soln
-            let r' = extractATerm m'
-            c' <- foldLF (Unify r r')
-            return (Just [c'], soln)
+        Just m' ->
+            let r' = extractATerm m' in
+            handleUnify r' r (Changed $ do
+                  c' <- foldLF (Unify r' r)
+                  return (Just [c'], soln))
 
     Unify r1 r2 ->
-      let ?soln = soln in
-      let res = unifyATm WeakRefl WeakRefl r1 r2 in
-      case res of
-        UnifyDefault -> Unchanged (Just [c], soln)
-        UnifyDecompose xs -> Changed (xs >>= \xs' -> return (xs', soln))
-        UnifySolve u r ->
-          let m = aterm r in
-          case lookupUVar Proxy u soln of
-            Nothing -> Changed $ do
-               soln' <- assignUVar Proxy u m soln
-               return (Just [], soln')
-            Just m' -> Changed $ do
-               let r' = extractATerm m'
-               c' <- foldLF (Unify r r')
-               return (Just [c'], soln)
+      handleUnify r1 r2 (Unchanged (Just [c], soln))
 
     And cs -> go cs soln
      where go [] s = return (Just [], s)
@@ -94,6 +80,25 @@ doSolve c soln =
 
     Forall _ _ _ -> error "doSolve : forall quantifier"
     Exists _ _ _ -> error "doSolve : exists quantifier"
+
+ where
+  handleUnify r1 r2 def =
+      let ?soln = soln in
+      let res = unifyATm WeakRefl WeakRefl r1 r2 in
+      case res of
+        UnifyDefault -> def
+        UnifyDecompose xs -> Changed (xs >>= \xs' -> return (xs', soln))
+        UnifySolve u r ->
+          let m = aterm r in
+          case lookupUVar Proxy u soln of
+            Nothing -> Changed $ do
+               soln' <- assignUVar Proxy u m soln
+               return (Just [], soln')
+            Just m' -> do
+               let r' = extractATerm m'
+               handleUnify r r' (Changed $ do
+                 c' <- foldLF (Unify r r')
+                 return (Just [c'], soln))
 
 mkConj :: forall f m γ
       . (LFModel f m)
@@ -234,5 +239,10 @@ unifyATm w₁ w₂ x y =
          UnifyDecompose xs -> UnifyDecompose $ do
              cm <- unifyTm w₁ w₂ m₁ m₂
              cAnd' cm xs
+
+    (App _ _, Const _) ->
+      UnifyDecompose (return Nothing)
+    (Const _, App _ _) ->
+      UnifyDecompose (return Nothing)
 
     _ -> UnifyDefault
