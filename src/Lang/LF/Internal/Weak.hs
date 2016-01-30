@@ -66,16 +66,29 @@ weakTrans (WeakSkip w₁) (WeakSkip w₂) = WeakSkip (weakTrans w₁ w₂)
  -- by functor law for mapF
  --     mapF w₁ ∘ mapF w₂ = mapF (w₁ ∘ w₂)
 
+-- A very restricted form of weakening used inside
+-- the normalization procedure
+data Wk γ γ' where
+  WkRefl  :: Wk γ γ
+  WkR     :: Wk γ γ' -> Wk γ (γ'::>b)
 
 weakNormalize :: Weakening γ γ'
-              -> Weakening γ γ'
-weakNormalize WeakRefl             = WeakRefl
-weakNormalize (WeakR w)            = WeakR (weakNormalize w)
-weakNormalize (WeakSkip w)         = weakSkip (weakNormalize w)
-weakNormalize (WeakL WeakRefl)     = WeakR WeakRefl
-weakNormalize (WeakL (WeakR w))    = WeakR (weakNormalize (WeakL w))
-weakNormalize (WeakL (WeakSkip w)) = WeakR (weakNormalize w)
-weakNormalize (WeakL (WeakL w))    = weakNormalize (WeakL (weakNormalize (WeakL w)))
+               -> Weakening γ γ'
+weakNormalize w0 = go w0 WkRefl
+ where
+   wk2weak :: Wk γ γ' -> Weakening γ γ'
+   wk2weak WkRefl  = WeakRefl
+   wk2weak (WkR w) = WeakR (wk2weak w)
+
+   go :: Weakening γ2 γ3
+      -> Wk γ1 γ2
+      -> Weakening γ1 γ3
+   go WeakRefl  wk          = wk2weak wk
+   go (WeakR w) wk          = WeakR (go w wk)
+   go (WeakL w) wk          = go w (WkR wk)
+   go (WeakSkip w) (WkR wk) = WeakR (go w wk)
+   go (WeakSkip w) WkRefl   = weakSkip (go w WkRefl)
+
 
 mergeWeak :: Weakening γ₁ γ
           -> Weakening γ₂ γ

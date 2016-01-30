@@ -15,16 +15,26 @@ weakSubst :: Weakening γ₁ γ₂
           -> Subst f γ₁ γ₃
 weakSubst = SubstWeak
 
-lookupSubst :: (LFModel f m)
-          => Var γ₁
-          -> Subst f γ₁ γ₂
-          -> m (f γ₂ TERM)
-lookupSubst v SubstRefl = var v
-lookupSubst v (SubstWeak w s) = lookupSubst (weakenVar w v) s
-lookupSubst B (SubstApply _ x) = return x
-lookupSubst (F v) (SubstApply s _) = lookupSubst v s
-lookupSubst B (SubstSkip _) = aterm <$> foldLF Var
-lookupSubst (F v) (SubstSkip s) = weaken (WeakL WeakRefl) <$> lookupSubst v s
+lookupSubst :: forall f m γ₁ γ₂
+             . (LFModel f m)
+            => Var γ₁
+            -> Subst f γ₁ γ₂
+            -> m (f γ₂ TERM)
+lookupSubst v0 sub0 = go v0 sub0 WeakRefl
+ where
+  go :: forall γ₁ γ₂ γ₃
+      . Var γ₁
+     -> Subst f γ₁ γ₂
+     -> Weakening γ₂ γ₃
+     -> m (f γ₃ TERM)
+  go v     SubstRefl         wk = aterm <$> var0 v wk
+  go v     (SubstWeak w s)   wk = go (weakenVar w v) s wk
+  go B     (SubstApply _ x)  wk = return $ weaken wk x
+  go (F v) (SubstApply s _)  wk = go v s wk
+  go B     (SubstSkip _)     wk = aterm <$> var0 B wk
+  go (F v) (SubstSkip s)     wk = go v s (WeakL wk)
+
+
 
 strengthen :: (LFModel f m, ?soln :: LFSoln f)
            => f (γ::>b) s
@@ -141,7 +151,7 @@ abstractLF :: forall f m s γ γ'
 abstractLF AbstractRefl tm = return tm
 abstractLF abs tm =
   case unfoldLF tm of
-    Weak w x -> abstractWeak abs w $ \w' abs' ->
+    Weak w x -> abstractWeak abs (weakNormalize w) $ \w' abs' ->
                   weaken w' <$> abstractUVars abs' x
 
     Type -> foldLF Type
@@ -204,7 +214,7 @@ hsubstLF (SubstWeak w s) tm = hsubst s (weaken w tm)
 hsubstLF sub tm =
   case unfoldLF tm of
      Weak w x ->
-       substWeak sub w $ \w' sub' ->
+       substWeak sub (weakNormalize w) $ \w' sub' ->
          weaken w' <$> hsubstLF sub' x
 
      Type -> foldLF Type
