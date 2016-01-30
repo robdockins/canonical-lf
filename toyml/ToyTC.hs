@@ -9,7 +9,7 @@ import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 import           Lang.LF
 import           Lang.LF.ChangeT
 
-import Ucps
+import           Terms
 
 import qualified Debug.Trace as Debug
 

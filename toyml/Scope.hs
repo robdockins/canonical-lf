@@ -7,7 +7,7 @@ import qualified Data.Map as Map
 import           Lang.LF
 
 import Grammar
-import Ucps
+import Terms
 
 scopeAnalysis
   :: (LiftClosed γ

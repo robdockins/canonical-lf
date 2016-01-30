@@ -62,11 +62,13 @@ executable toyml
   hs-source-dirs: toyml
   main-is: Main.hs
   other-modules:
+    CPS,
     Lexer,
     Grammar,
     Scope,
-    ToyTC,
-    Ucps
+    Simplify,
+    Terms,
+    ToyTC
   Build-tools:
     happy, alex >= 3.0.5
   build-depends:
