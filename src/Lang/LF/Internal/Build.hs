@@ -24,7 +24,7 @@ class AutoWeaken γ diff γ' where
 instance AutoWeaken γ E γ where
   autoweakening _ = WeakRefl
 instance AutoWeaken γ diff γ' => AutoWeaken γ (diff ::> b) (γ' ::> b) where
-  autoweakening _ = WeakR (autoweakening (Proxy :: Proxy diff))
+  autoweakening _ = WeakLeft (autoweakening (Proxy :: Proxy diff))
 
 type CtxSub γ γ' = (CtxAppend γ (CtxDiff γ γ') ~ γ', AutoWeaken γ (CtxDiff γ γ') γ')
 
@@ -45,7 +45,7 @@ infixr 5 ==>
 infixl 2 @@
 
 var0 :: (LFModel f m) => Var γ -> Weakening γ γ' -> m (f γ' ATERM)
-var0 (F x) w = var0 x (WeakL w)
+var0 (F x) w = var0 x (WeakRight w)
 var0 B w = weaken w <$> foldLF Var
 
 var :: (CtxSub γ γ', LFModel f m) => Var γ -> m (f γ' TERM)

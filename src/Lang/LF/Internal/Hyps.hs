@@ -27,9 +27,9 @@ lookupHyp :: LFModel f m
           -> Weakening γ γ'
           -> (String, Quant, f γ' TYPE)
 lookupHyp (HCons _ q nm a) B w =
-  (nm, q, weaken (WeakL w) a)
+  (nm, q, weaken (WeakRight w) a)
 lookupHyp (HCons h _ _ _) (F x) w =
-  lookupHyp h x (WeakL w)
+  lookupHyp h x (WeakRight w)
 lookupHyp HNil _ _ = error "impossible"
 
 lookupVar :: LFModel f m

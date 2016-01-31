@@ -100,7 +100,7 @@ class LiftClosed (γ :: Ctx *) where
 instance LiftClosed E where
   liftWeakening = WeakRefl
 instance LiftClosed γ => LiftClosed (γ ::> b) where
-  liftWeakening = WeakR liftWeakening
+  liftWeakening = WeakLeft liftWeakening
 
 data Prec
   = TopPrec
@@ -141,8 +141,8 @@ instance Ord (Var γ) where
 --   variables.
 data Weakening γ γ' where
   WeakRefl  :: Weakening γ γ
-  WeakR     :: Weakening γ γ' -> Weakening γ (γ'::>b)
-  WeakL     :: Weakening (γ::>b) γ' -> Weakening γ γ'
+  WeakLeft  :: Weakening γ γ' -> Weakening γ (γ'::>b)
+  WeakRight :: Weakening (γ::>b) γ' -> Weakening γ γ'
   WeakSkip  :: Weakening γ γ' -> Weakening (γ::>b) (γ'::>b)
 
 -- | A substituion from γ to γ' represents a function that
@@ -260,7 +260,7 @@ class (Ord (LFTypeConst f), Ord (LFConst f), Ord (LFUVar f),
 
   weaken :: Weakening γ γ' -> f γ s -> f γ' s
   weak   :: f γ s -> f (γ::>b) s
-  weak = weaken (WeakR WeakRefl)
+  weak = weaken (WeakLeft WeakRefl)
 
   aterm :: f γ ATERM -> f γ TERM
   atype :: f γ ATYPE -> f γ TYPE

@@ -29,11 +29,11 @@ lookupContData :: BindData γ
                -> Maybe (LF γ TERM)
 lookupContData = go WeakRefl
  where go :: Weakening γ γ' -> BindData γ -> Var γ -> Maybe (LF γ' TERM)
-       go w (BindLetcont bd _)     (F v) = go (WeakL w) bd v
-       go w (BindOpaque bd)        (F v) = go (WeakL w) bd v
-       go w (BindLetval  bd _ _ _) (F v) = go (WeakL w) bd v
-       go w (BindLetproj bd _ _)   (F v) = go (WeakL w) bd v
-       go w (BindLetcont  _ v)     B     = Just (weaken (WeakL w) v)
+       go w (BindLetcont bd _)     (F v) = go (WeakRight w) bd v
+       go w (BindOpaque bd)        (F v) = go (WeakRight w) bd v
+       go w (BindLetval  bd _ _ _) (F v) = go (WeakRight w) bd v
+       go w (BindLetproj bd _ _)   (F v) = go (WeakRight w) bd v
+       go w (BindLetcont  _ v)     B     = Just (weaken (WeakRight w) v)
        go _ _                      _     = Nothing
 
 lookupValData :: BindData γ
@@ -41,11 +41,11 @@ lookupValData :: BindData γ
               -> Maybe (Bool, Bool, LF γ TERM)
 lookupValData = go WeakRefl
  where go :: Weakening γ γ' -> BindData γ -> Var γ -> Maybe (Bool, Bool, LF γ' TERM)
-       go w (BindLetcont bd _)   (F v) = go (WeakL w) bd v
-       go w (BindOpaque bd)      (F v) = go (WeakL w) bd v
-       go w (BindLetval  bd _ _ _) (F v) = go (WeakL w) bd v
-       go w (BindLetproj bd _ _) (F v) = go (WeakL w) bd v
-       go w (BindLetval _ lin cheap val) B     = Just (lin, cheap, weaken (WeakL w) val)
+       go w (BindLetcont bd _)   (F v) = go (WeakRight w) bd v
+       go w (BindOpaque bd)      (F v) = go (WeakRight w) bd v
+       go w (BindLetval  bd _ _ _) (F v) = go (WeakRight w) bd v
+       go w (BindLetproj bd _ _) (F v) = go (WeakRight w) bd v
+       go w (BindLetval _ lin cheap val) B     = Just (lin, cheap, weaken (WeakRight w) val)
        go _ _                  _     = Nothing
 
 lookupProjData :: BindData γ
@@ -53,11 +53,11 @@ lookupProjData :: BindData γ
               -> Maybe (Bool, LF γ TERM)
 lookupProjData = go WeakRefl
  where go :: Weakening γ γ' -> BindData γ -> Var γ -> Maybe (Bool, LF γ' TERM)
-       go w (BindLetcont bd _)   (F v) = go (WeakL w) bd v
-       go w (BindOpaque bd)      (F v) = go (WeakL w) bd v
-       go w (BindLetval  bd _ _ _) (F v) = go (WeakL w) bd v
-       go w (BindLetproj bd _ _) (F v) = go (WeakL w) bd v
-       go w (BindLetproj _ b v)  B     = Just (b, weaken (WeakL w) v)
+       go w (BindLetcont bd _)   (F v) = go (WeakRight w) bd v
+       go w (BindOpaque bd)      (F v) = go (WeakRight w) bd v
+       go w (BindLetval  bd _ _ _) (F v) = go (WeakRight w) bd v
+       go w (BindLetproj bd _ _) (F v) = go (WeakRight w) bd v
+       go w (BindLetproj _ b v)  B     = Just (b, weaken (WeakRight w) v)
        go _ _                    _     = Nothing
 
 

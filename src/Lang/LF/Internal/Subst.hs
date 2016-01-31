@@ -32,7 +32,7 @@ lookupSubst v0 sub0 = go v0 sub0 WeakRefl
   go B     (SubstApply _ x)  wk = return $ weaken wk x
   go (F v) (SubstApply s _)  wk = go v s wk
   go B     (SubstSkip _)     wk = aterm <$> var0 B wk
-  go (F v) (SubstSkip s)     wk = go v s (WeakL wk)
+  go (F v) (SubstSkip s)     wk = go v s (WeakRight wk)
 
 
 
