@@ -78,7 +78,6 @@ data LF (f :: Ctx * -> SORT -> *) :: Ctx * -> SORT -> * where
 
   Fail   :: LF f γ CON
   Unify  :: !(f γ ATERM) -> !(f γ ATERM) -> LF f γ CON
-  UnifyVar :: !(LFUVar f) -> !(f γ ATERM) -> LF f γ CON
   And    :: [f γ CON] -> LF f γ CON
   Forall :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) CON) -> LF f γ CON
   Exists :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) CON) -> LF f γ CON

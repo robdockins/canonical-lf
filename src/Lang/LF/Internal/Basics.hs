@@ -102,7 +102,6 @@ foldFree merge z = go
       App r m -> go f r `merge` go f m
       Var -> f B
       Unify r1 r2 -> go f r1 `merge` go f r2
-      UnifyVar _v r -> go f r
       And cs -> foldr merge z $ map (go f) cs
       Forall _ a c -> go f a `merge` go f' c
       Exists _ a c -> go f a `merge` go f' c
@@ -129,7 +128,6 @@ freeUVarsLF tm =
     App r m -> Set.union (freeUVars r) (freeUVars m)
     Var -> Set.empty
     Unify r1 r2 -> Set.union (freeUVars r1) (freeUVars r2)
-    UnifyVar v r -> Set.insert v (freeUVars r)
     And cs -> Set.unions (map freeUVars cs)
     Forall _ a c -> Set.union (freeUVars a) (freeUVars c)
     Exists _ a c -> Set.union (freeUVars a) (freeUVars c)

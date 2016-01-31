@@ -185,11 +185,6 @@ validateConLF w c =
   case unfoldLF c of
     Weak w' x -> validateCon (weakCompose w w') x
     Fail -> return ()
-    UnifyVar u r -> do
-      -- FIXME? directly check for accecptability?
-      _ <- uvarType u
-      _ <- inferAType w r
-      return ()
     Unify r1 r2 -> do
       -- FIXME? directly check for accecptability?
       _ <- inferAType w r1

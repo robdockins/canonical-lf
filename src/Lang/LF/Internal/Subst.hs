@@ -75,13 +75,6 @@ instantiateLF tm =
 
     Fail -> Unchanged tm
 
-    UnifyVar u r ->
-      case go r of
-        Left _ -> Unchanged tm
-        Right mr -> Changed $ do
-          r' <- extractATerm <$> mr
-          foldLF (UnifyVar u r')
-
     Unify x y -> doUnify x y
 
     And xs -> onChange tm foldLF (And <$> mapM instantiate xs)
@@ -172,15 +165,6 @@ abstractLF abs tm =
        r2' <- abstractUVars abs r2
        foldLF (Unify r1' r2')
 
-    UnifyVar u r -> do
-         r' <- abstractUVars abs r
-         case absUVar abs u of
-           Just v -> do
-             v' <- var0 v WeakRefl
-             foldLF (Unify v' r')
-           Nothing ->
-             foldLF (UnifyVar u r')
-
     Forall nm a c -> foldLF =<< (Forall nm <$> abstractUVars abs a <*> abstractUVars abs' c)
     Exists nm a c -> foldLF =<< (Exists nm <$> abstractUVars abs a <*> abstractUVars abs' c)
 
@@ -240,10 +224,6 @@ hsubstLF sub tm =
         r1' <- f =<< hsubstTm sub r1
         r2' <- f =<< hsubstTm sub r2
         foldLF (Unify r1' r2')
-
-     UnifyVar u r -> do
-         r' <- f =<< hsubstTm sub r
-         foldLF (UnifyVar u r')
 
      Forall nm a c -> foldLF =<< (Forall nm <$> hsubst sub a <*> hsubst sub' c)
      Exists nm a c -> foldLF =<< (Exists nm <$> hsubst sub a <*> hsubst sub' c)

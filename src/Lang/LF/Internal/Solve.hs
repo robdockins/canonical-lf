@@ -52,18 +52,6 @@ doSolve c soln =
 
     Fail -> Unchanged (Nothing, soln)
 
-    UnifyVar u r ->
-      let m = aterm r in
-      case lookupUVar Proxy u soln of
-        Nothing -> Changed $ do
-            soln' <- assignUVar (Proxy :: Proxy f) u m soln
-            return (Just [], soln')
-        Just m' ->
-            let r' = extractATerm m' in
-            handleUnify r' r (Changed $ do
-                  c' <- foldLF (Unify r' r)
-                  return (Just [c'], soln))
-
     Unify r1 r2 ->
       handleUnify r1 r2 (Unchanged (Just [c], soln))
 
@@ -88,7 +76,7 @@ doSolve c soln =
       case res of
         UnifyDefault -> def
         UnifyDecompose xs -> Changed (xs >>= \xs' -> return (xs', soln))
-        UnifySolve u r ->
+        UnifySolve u _uw r ->
           let m = aterm r in
           case lookupUVar Proxy u soln of
             Nothing -> Changed $ do
@@ -137,8 +125,9 @@ unifyTm w₁ w₂ x y =
                Just cs -> foldLF (And cs)
            UnifyDefault ->
              foldLF (Unify (weaken w₁ r1) (weaken w₂ r2))
-           UnifySolve u m ->
-             foldLF (UnifyVar u m)
+           UnifySolve u uw m -> do
+             u' <- weaken uw <$> foldLF (UVar u)
+             foldLF (Unify u' m)
 
      (Lam nm a1 m1, Lam _ a2 m2) -> do
         cty <- unifyTy w₁ w₂ a1 a2
@@ -198,10 +187,10 @@ cAnd' c cs =
     And xs -> fmap (fmap (xs++)) cs
     _      -> fmap (fmap (c:)) cs
 
-data UnifyResult f m γ
-  = UnifyDefault
-  | UnifyDecompose (m (Maybe [f γ CON]))
-  | UnifySolve (LFUVar f) (f γ ATERM)
+data UnifyResult f m γ where
+  UnifyDefault :: UnifyResult f m γ
+  UnifyDecompose :: m (Maybe [f γ CON]) -> UnifyResult f m γ
+  UnifySolve :: LFUVar f -> Weakening E γ -> f γ ATERM -> UnifyResult f m γ
 
 unifyATm :: forall f m γ₁ γ₂ γ
       . (LFModel f m, ?soln :: LFSoln f)
@@ -224,18 +213,18 @@ unifyATm w₁ w₂ x y =
        | Just x' <- lookupUVar Proxy u ?soln -> UnifyDecompose $ do
            c <- unifyTm w₁ w₂ x' (aterm y)
            return (Just [c])
-       | otherwise -> UnifySolve u (weaken w₂ y)
+       | otherwise -> UnifySolve u w₁ (weaken w₂ y)
     (_, UVar u)
        | Just y' <- lookupUVar Proxy u ?soln -> UnifyDecompose $ do
            c <- unifyTm w₁ w₂ (aterm x) y'
            return (Just [c])
-       | otherwise -> UnifySolve u (weaken w₁ x)
+       | otherwise -> UnifySolve u w₂ (weaken w₁ x)
 
     (App r₁ m₁, App r₂ m₂) ->
        let res = unifyATm w₁ w₂ r₁ r₂ in
        case res of
          UnifyDefault      -> UnifyDefault
-         UnifySolve _ _    -> UnifyDefault
+         UnifySolve _ _ _  -> UnifyDefault
          UnifyDecompose xs -> UnifyDecompose $ do
              cm <- unifyTm w₁ w₂ m₁ m₂
              cAnd' cm xs
