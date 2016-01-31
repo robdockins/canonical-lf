@@ -59,10 +59,10 @@ type family LFSoln (f :: Ctx * -> SORT -> *) :: *
 --   by `γ`, a context of free variables and `s` the syntactic sort
 --   of the term.
 data LF (f :: Ctx * -> SORT -> *) :: Ctx * -> SORT -> * where
-  Weak   :: Weakening γ γ' -> f γ s -> LF f γ' s
+  Weak   :: !(Weakening γ γ') -> !(f γ s) -> LF f γ' s
 
   Type   :: LF f γ KIND
-  KPi    :: !String -> !(f γ TYPE) -> f (γ ::> ()) KIND -> LF f γ KIND
+  KPi    :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) KIND) -> LF f γ KIND
 
   AType   :: !(f γ ATYPE) -> LF f γ TYPE
   TyPi    :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) TYPE) -> LF f γ TYPE
@@ -74,11 +74,11 @@ data LF (f :: Ctx * -> SORT -> *) :: Ctx * -> SORT -> * where
   Var    :: LF f (γ ::> b) ATERM
   Const  :: !(LFConst f) -> LF f E ATERM
   App    :: !(f γ ATERM) -> !(f γ TERM) -> LF f γ ATERM
-  UVar   :: LFUVar f -> LF f E ATERM
+  UVar   :: !(LFUVar f) -> LF f E ATERM
 
   Fail   :: LF f γ CON
   Unify  :: !(f γ ATERM) -> !(f γ ATERM) -> LF f γ CON
-  UnifyVar :: LFUVar f -> !(f γ ATERM) -> LF f γ CON
+  UnifyVar :: !(LFUVar f) -> !(f γ ATERM) -> LF f γ CON
   And    :: [f γ CON] -> LF f γ CON
   Forall :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) CON) -> LF f γ CON
   Exists :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) CON) -> LF f γ CON
@@ -90,7 +90,7 @@ data LF (f :: Ctx * -> SORT -> *) :: Ctx * -> SORT -> * where
 -- | A sequence of hypotheses, giving types to the free variables in γ.
 data Hyps (f :: Ctx * -> SORT -> *) (γ :: Ctx *) where
   HNil   :: Hyps f E
-  HCons  :: Hyps f γ -> Quant -> String -> f γ TYPE -> Hyps f (γ ::> b)
+  HCons  :: !(Hyps f γ) -> !Quant -> !String -> !(f γ TYPE) -> Hyps f (γ ::> b)
 
 class LiftClosed (γ :: Ctx *) where
   liftWeakening :: Weakening E γ
@@ -111,8 +111,8 @@ data Prec
 
 
 data Var :: Ctx * -> * where
-  F :: Var γ -> Var (γ ::> b)
-  B ::          Var (γ ::> b)
+  F :: !(Var γ) -> Var (γ ::> b)
+  B ::             Var (γ ::> b)
 
 instance Show (Var γ) where
  showsPrec _d B = ("B" ++)
@@ -141,9 +141,9 @@ instance Ord (Var γ) where
 --   variables.
 data Weakening γ γ' where
   WeakRefl  :: Weakening γ γ
-  WeakLeft  :: Weakening γ γ' -> Weakening γ (γ'::>b)
-  WeakRight :: Weakening (γ::>b) γ' -> Weakening γ γ'
-  WeakSkip  :: Weakening γ γ' -> Weakening (γ::>b) (γ'::>b)
+  WeakLeft  :: !(Weakening γ γ') -> Weakening γ (γ'::>b)
+  WeakRight :: !(Weakening (γ::>b) γ') -> Weakening γ γ'
+  WeakSkip  :: !(Weakening γ γ') -> Weakening (γ::>b) (γ'::>b)
 
 -- | A substituion from γ to γ' represents a function that
 --   sends a term in context γ to one in context γ' that
@@ -154,9 +154,11 @@ data Weakening γ γ' where
 --   and avoid traversing subtrees.
 data Subst f :: Ctx * -> Ctx * -> * where
   SubstRefl  :: Subst f γ γ
-  SubstApply :: Subst f γ γ' -> f γ' TERM -> Subst f (γ ::> b) γ'
-  SubstWeak  :: Weakening γ₂ γ₃ -> Subst f γ₁ γ₂ -> Subst f γ₁ γ₃
-  SubstSkip  :: Subst f γ γ' -> Subst f (γ ::> b) (γ' ::> b)
+  SubstApply :: !(Subst f γ γ')
+             -> f γ' TERM -- NB don't make this strict.  'strengthen' puts 'error' here
+             -> Subst f (γ ::> b) γ'
+  SubstWeak  :: !(Weakening γ₂ γ₃) -> !(Subst f γ₁ γ₂) -> Subst f γ₁ γ₃
+  SubstSkip  :: !(Subst f γ γ') -> Subst f (γ ::> b) (γ' ::> b)
 
 
 -- | An abstraction is a bit lit a substituion in reverse;
@@ -164,10 +166,10 @@ data Subst f :: Ctx * -> Ctx * -> * where
 --   are to be replaced by regular deBruijn variables.
 data Abstraction f :: Ctx * -> Ctx * -> * where
   AbstractRefl  :: Abstraction f γ γ
-  AbstractApply :: Abstraction f γ γ'
-                -> LFUVar f
+  AbstractApply :: !(Abstraction f γ γ')
+                -> !(LFUVar f)
                 -> Abstraction f γ (γ'::>b)
-  AbstractSkip  :: Abstraction f γ γ'
+  AbstractSkip  :: !(Abstraction f γ γ')
                 -> Abstraction f (γ::>b) (γ'::>b)
 
 -- | This datastructure represents the ways a canonical LF kind can be viewed.
