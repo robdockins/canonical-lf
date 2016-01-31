@@ -7,6 +7,20 @@ mapF :: (Var γ -> Var γ') -> Var (γ ::> b) -> Var (γ' ::> b)
 mapF _ B = B
 mapF f (F x) = F (f x)
 
+
+weakenClosed :: forall γ x
+              . Weakening γ E
+             -> ((γ ~ E) => x)
+             -> x
+weakenClosed WeakRefl k = k
+weakenClosed (WeakRight w) _ = weakenImpossible w
+
+weakenImpossible :: forall γ b x
+                  . Weakening (γ ::> b) E
+                 -> x
+weakenImpossible (WeakRight w) = weakenImpossible w
+
+
 weakenVar :: Weakening γ γ'
           -> Var γ
           -> Var γ'

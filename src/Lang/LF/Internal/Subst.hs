@@ -52,7 +52,7 @@ instantiateLF :: forall f m γ s
          -> ChangeT m (f γ s)
 instantiateLF tm =
   case unfoldLF tm of
-    Weak w x -> weaken w <$> instantiate x
+    Weak w x -> onChange tm (return . weaken w) (instantiate x)
 
     Type   -> Unchanged tm
     KPi nm ty k -> onChange tm foldLF (KPi nm <$> instantiate ty <*> instantiate k)
