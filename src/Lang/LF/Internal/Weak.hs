@@ -3,11 +3,6 @@ module Lang.LF.Internal.Weak where
 import Lang.LF.Internal.Model
 
 
-weak :: LFModel f m
-     => f γ s
-     -> f (γ::>b) s
-weak = weaken (WeakR WeakRefl)
-
 mapF :: (Var γ -> Var γ') -> Var (γ ::> b) -> Var (γ' ::> b)
 mapF _ B = B
 mapF f (F x) = F (f x)
@@ -27,44 +22,47 @@ weakSkip :: Weakening γ γ' -> Weakening (γ::>b) (γ'::>b)
 weakSkip WeakRefl = WeakRefl
 weakSkip w        = WeakSkip w
 
-weakTrans :: Weakening γ₁ γ₂
-          -> Weakening γ₂ γ₃
-          -> Weakening γ₁ γ₃
 
-weakTrans w₁ WeakRefl = w₁
+weakCompose
+  :: Weakening γ₂ γ₃
+  -> Weakening γ₁ γ₂
+  -> Weakening γ₁ γ₃
+
+weakCompose WeakRefl w₁ = w₁
  -- by identity
- --    w₁ ∘ 1 = w₁
+ --    1 ∘ w₁ = w₁
 
-weakTrans w₁ (WeakR w₂) = WeakR (weakTrans w₁ w₂)
+weakCompose (WeakR w₂) w₁ = WeakR (weakCompose w₂ w₁)
  -- by associativity
- --    w₁ ∘ (w₂ ∘ weak) = (w₁ ∘ w₂) ∘ weak
+ --    (weak ∘ w₂) ∘ w₁ = weak ∘ (w₂ ∘ w₁)
 
-weakTrans w₁ (WeakL w₂) = weakTrans (WeakR w₁) w₂
+weakCompose (WeakL w₂) w₁ = weakCompose w₂ (WeakR w₁)
  -- by associativity
- --    w₁ ∘ (weak ∘ w₂) = (w₁ ∘ weak) ∘ w₂
+ --    (w₂ ∘ weak) ∘ w₁ = w₂ ∘ (weak ∘ w₁)
  --
  -- Note: This is the only recursive rule that does not decrease both
  --       arguments.  Termination can be proved via lexicographic
  --       order that decreases w₂ then w₁.
 
-weakTrans WeakRefl w₂ = w₂
+weakCompose w₂ WeakRefl = w₂
  -- by identity
- --    1 ∘ w₂ = w₂
+ --    w₂ ∘ 1 = w₂
 
-weakTrans (WeakL w₁) w₂ = WeakL (weakTrans w₁ w₂)
+weakCompose w₂ (WeakL w₁) = WeakL (weakCompose w₂ w₁)
  -- by associativity
- --  (weak ∘ w₁) ∘ w₂ = weak ∘ (w₁ ∘ w₂)
+ --  w₂ ∘ (w₁ ∘ weak) = (w₂ ∘ w₁) ∘ weak
 
-weakTrans (WeakR w₁) (WeakSkip w₂) = WeakR (weakTrans w₁ w₂)
+weakCompose (WeakSkip w₂) (WeakR w₁) = WeakR (weakCompose w₂ w₁)
  -- by naturality of one-step weakening and assocativity
- --   (w₁ ∘ weak) ∘ mapF w₂
- --    = w₁ ∘ (weak ∘ mapF w₂)
- --    = w₁ ∘ (w₂ ∘ weak)
- --    = (w₁ ∘ w₂) ∘ weak
+ --   mapF w₂ ∘ (weak ∘ w₁)
+ --    = (mapF w₂ ∘ weak) ∘ w₁
+ --    = (weak ∘ w₂) ∘ w₁
+ --    = weak ∘ (w₂ ∘ w₁)
 
-weakTrans (WeakSkip w₁) (WeakSkip w₂) = WeakSkip (weakTrans w₁ w₂)
+weakCompose (WeakSkip w₂) (WeakSkip w₁) = WeakSkip (weakCompose w₂ w₁)
  -- by functor law for mapF
- --     mapF w₁ ∘ mapF w₂ = mapF (w₁ ∘ w₂)
+ --     mapF w₂ ∘ mapF w₁ = mapF (w₂ ∘ w₁)
+
 
 -- A very restricted form of weakening used inside
 -- the normalization procedure
@@ -126,7 +124,7 @@ substWeak SubstRefl w k = k w SubstRefl
 
 substWeak (SubstWeak w0 s) w k =
   substWeak s w $ \w' s' ->
-    k (weakTrans w' w0) s'
+    k (weakCompose w0 w') s'
 
 substWeak (SubstSkip s) (WeakR w) k =
   substWeak s w $ \w' s' ->
@@ -144,7 +142,7 @@ substWeak (SubstApply s f) (WeakSkip w) k =
 substWeak s (WeakL w) k =
   substWeak s w $ \w' s' ->
     substWeak s' (WeakR WeakRefl) $ \w'' s'' ->
-      k (weakTrans w'' w') s''
+      k (weakCompose w' w'') s''
 
 abstractWeak :: Abstraction f γ₂ γ₃
              -> Weakening γ₁ γ₂
@@ -163,6 +161,7 @@ abstractWeak (AbstractApply a u) w k =
 abstractWeak (AbstractSkip a) (WeakSkip w) k =
   abstractWeak a w $ \w' a' ->
     k (WeakSkip w') (AbstractSkip a')
+
 abstractWeak (AbstractSkip a) (WeakR w) k =
   abstractWeak a w $ \w' a' ->
     k (WeakR w') a'
@@ -170,11 +169,10 @@ abstractWeak (AbstractSkip a) (WeakR w) k =
 abstractWeak a (WeakL w) k =
   abstractWeak a w $ \w' a' ->
     abstractWeak a' (WeakR WeakRefl) $ \w'' a'' ->
-      k (weakTrans w'' w') a''
+      k (weakCompose w' w'') a''
 
 absWeaken :: Abstraction f γ γ'
           -> Weakening γ γ'
 absWeaken AbstractRefl = WeakRefl
 absWeaken (AbstractApply a _) = WeakR (absWeaken a)
 absWeaken (AbstractSkip a) = WeakSkip (absWeaken a)
-

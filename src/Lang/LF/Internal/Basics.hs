@@ -14,8 +14,8 @@ alphaEqLF :: LFModel f m
           -> Bool
 alphaEqLF w₁ w₂ x y =
   case (unfoldLF x, unfoldLF y) of
-    (Weak w x'   , _)              -> alphaEqLF (weakTrans w w₁) w₂ x' y
-    (_           , Weak w y')      -> alphaEqLF w₁ (weakTrans w w₂) x y'
+    (Weak w x'   , _)              -> alphaEqLF (weakCompose w₁ w) w₂ x' y
+    (_           , Weak w y')      -> alphaEqLF w₁ (weakCompose w₂ w) x y'
     (Type        , Type)           -> True
     (KPi _ a k   , KPi _ a' k')    -> (&&) (alphaEqLF w₁ w₂ a a') (alphaEqLF (weakSkip w₁) (weakSkip w₂) k k')
     (AType x     , AType x')       -> alphaEqLF w₁ w₂ x x'

@@ -259,6 +259,9 @@ class (Ord (LFTypeConst f), Ord (LFConst f), Ord (LFUVar f),
   foldLF :: LF f γ s -> m (f γ s)
 
   weaken :: Weakening γ γ' -> f γ s -> f γ' s
+  weak   :: f γ s -> f (γ::>b) s
+  weak = weaken (WeakR WeakRefl)
+
   aterm :: f γ ATERM -> f γ TERM
   atype :: f γ ATYPE -> f γ TYPE
 

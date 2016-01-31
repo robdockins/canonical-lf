@@ -14,7 +14,7 @@ validateKindLF :: forall f m γ γ'
                -> m ()
 validateKindLF w tm =
   case unfoldLF tm of
-    Weak w' x -> validateKind (weakTrans w' w) x
+    Weak w' x -> validateKind (weakCompose w w') x
     Type -> return ()
     KPi nm a k -> do
       validateType w a
@@ -29,7 +29,7 @@ validateTypeLF :: forall f m γ γ'
                -> m ()
 validateTypeLF w tm =
   case unfoldLF tm of
-    Weak w' x -> validateType (weakTrans w' w) x
+    Weak w' x -> validateType (weakCompose w w') x
     TyPi nm a1 a2 -> do
       validateType w a1
       extendCtx nm QPi (weaken w a1) $ validateType (WeakSkip w) a2
@@ -51,7 +51,7 @@ inferKindLF :: forall f m γ γ'
             -> m (f γ' KIND)
 inferKindLF w tm =
   case unfoldLF tm of
-    Weak w' x -> inferKind (weakTrans w' w) x
+    Weak w' x -> inferKind (weakCompose w w') x
     TyConst x -> weaken w <$> constKind x
     TyApp p1 m2 -> do
       k <- inferKind w p1
@@ -65,7 +65,7 @@ inferKindLF w tm =
        -> m (f γ' KIND)
   subK subw k m =
      case unfoldLF k of
-       Weak w' x -> subK (weakTrans w' subw) x m
+       Weak w' x -> subK (weakCompose subw w') x m
        KPi _ a2 k1 -> do
          checkType (weaken w tm) m (weaken subw a2)
          hsubst (SubstApply (SubstWeak subw SubstRefl) m) k1
@@ -101,7 +101,7 @@ inferTypeLF :: forall f m γ γ'
             -> m (f γ' TYPE)
 inferTypeLF w m =
   case unfoldLF m of
-    Weak w' x -> inferType (weakTrans w' w) x
+    Weak w' x -> inferType (weakCompose w w') x
     ATerm r -> do
       a <- inferAType w r
       checkTp WeakRefl a
@@ -116,7 +116,7 @@ inferTypeLF w m =
   checkTp :: forall γ. Weakening γ γ' -> f γ TYPE -> m ()
   checkTp subw a =
      case unfoldLF a of
-       Weak w' x -> checkTp (weakTrans w' subw) x
+       Weak w' x -> checkTp (weakCompose subw w') x
        AType _ -> return ()
        TyPi _ _ _ -> do
            mdoc <- displayLF (weaken w m)
@@ -133,7 +133,7 @@ inferATypeLF :: forall m f γ γ'
              -> m (f γ' TYPE)
 inferATypeLF w r =
   case unfoldLF r of
-    Weak w' x -> inferAType (weakTrans w' w) x
+    Weak w' x -> inferAType (weakCompose w w') x
     Var -> do
       let (_,_,a) = lookupVar ?hyps (weakenVar w B)
       return a
@@ -151,7 +151,7 @@ inferATypeLF w r =
            -> m (f γ' TYPE)
   checkArg m2 wsub a =
       case unfoldLF a of
-        Weak w' x -> checkArg m2 (weakTrans w' wsub) x
+        Weak w' x -> checkArg m2 (weakCompose wsub w') x
         TyPi _ a2 a1 -> do
           checkType (weaken w r) m2 (weaken wsub a2)
           hsubst (SubstApply (SubstWeak wsub SubstRefl) m2) a1
@@ -167,7 +167,7 @@ validateGoalLF :: forall f m γ γ'
                -> m ()
 validateGoalLF w g =
   case unfoldLF g of
-    Weak w' x -> validateGoal (weakTrans w' w) x
+    Weak w' x -> validateGoal (weakCompose w w') x
     Sigma nm a g' -> do
       validateType w a
       extendCtx nm QSigma (weaken w a) $ validateGoal (WeakSkip w) g'
@@ -183,7 +183,7 @@ validateConLF :: forall f m γ γ'
                -> m ()
 validateConLF w c =
   case unfoldLF c of
-    Weak w' x -> validateCon (weakTrans w' w) x
+    Weak w' x -> validateCon (weakCompose w w') x
     Fail -> return ()
     UnifyVar u r -> do
       -- FIXME? directly check for accecptability?

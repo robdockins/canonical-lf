@@ -133,8 +133,8 @@ tyApp a m = join (go WeakRefl WeakRefl <$> a <*> m)
       . Weakening γ₁ γ -> Weakening γ₂ γ -> f γ₁ TYPE -> f γ₂ TERM -> m (f γ TYPE)
   go w1 w2 a' m' =
    case (unfoldLF a', unfoldLF m') of
-     (Weak w1' a'', _) -> go (weakTrans w1' w1) w2 a'' m'
-     (_, Weak w2' m'') -> go w1 (weakTrans w2' w2) a' m''
+     (Weak w1' a'', _) -> go (weakCompose w1 w1') w2 a'' m'
+     (_, Weak w2' m'') -> go w1 (weakCompose w2 w2') a' m''
      (AType p, _) ->
        mergeWeak (weakNormalize w1) (weakNormalize w2) $ \wcommon w1' w2' ->
          weaken wcommon . atype <$> foldLF (TyApp (weaken w1' p) (weaken w2' m'))
@@ -165,8 +165,8 @@ app x y = join (go WeakRefl WeakRefl <$> x <*> y)
       . Weakening γ₁ γ -> Weakening γ₂ γ -> f γ₁ TERM -> f γ₂ TERM -> m (f γ TERM)
   go w1 w2 x' y' =
    case (unfoldLF x', unfoldLF y') of
-     (Weak w1' x'', _) -> go (weakTrans w1' w1) w2 x'' y'
-     (_, Weak w2' y'') -> go w1 (weakTrans w2' w2) x' y''
+     (Weak w1' x'', _) -> go (weakCompose w1 w1') w2 x'' y'
+     (_, Weak w2' y'') -> go w1 (weakCompose w2 w2') x' y''
      (ATerm r, _) ->
         mergeWeak (weakNormalize w1) (weakNormalize w2) $ \wcommon w1' w2' ->
           weaken wcommon . aterm <$> foldLF (App (weaken w1' r) (weaken w2' y'))

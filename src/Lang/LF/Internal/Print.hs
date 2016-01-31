@@ -19,7 +19,7 @@ prettyLF
       -> m Doc
 prettyLF prec w x =
   case unfoldLF x of
-    Weak w' x -> ppLF prec (weakTrans w' w) x
+    Weak w' x -> ppLF prec (weakCompose w w') x
     Type -> return $ text "Type"
     KPi nm a k
       | freeVar B k -> do

@@ -12,7 +12,7 @@ extractATerm = go WeakRefl
   go :: forall γ γ'. Weakening γ γ' -> f γ TERM -> f γ' ATERM
   go w x =
     case unfoldLF x of
-      Weak w' x' -> go (weakTrans w' w) x'
+      Weak w' x' -> go (weakCompose w w') x'
       ATerm r    -> weaken w r
       _ -> error "Expected ATERM"
 
@@ -125,8 +125,8 @@ unifyTm :: forall f m γ₁ γ₂ γ
      -> m (f γ CON)
 unifyTm w₁ w₂ x y =
    case (unfoldLF x, unfoldLF y) of
-     (Weak w x', _) -> unifyTm (weakTrans w w₁) w₂ x' y
-     (_, Weak w y') -> unifyTm w₁ (weakTrans w w₂) x y'
+     (Weak w x', _) -> unifyTm (weakCompose w₁ w) w₂ x' y
+     (_, Weak w y') -> unifyTm w₁ (weakCompose w₂ w) x y'
      (ATerm r1, ATerm r2) -> do
          let res = unifyATm w₁ w₂ r1 r2
          case res of
@@ -156,8 +156,8 @@ unifyTy :: forall f m γ₁ γ₂ γ
      -> m (f γ CON)
 unifyTy w₁ w₂ x y =
   case (unfoldLF x, unfoldLF y) of
-    (Weak w x', _) -> unifyTy (weakTrans w w₁) w₂ x' y
-    (_, Weak w y') -> unifyTy w₁ (weakTrans w w₂) x y'
+    (Weak w x', _) -> unifyTy (weakCompose w₁ w) w₂ x' y
+    (_, Weak w y') -> unifyTy w₁ (weakCompose w₂ w) x y'
     (TyPi nm a1 a2, TyPi _ a1' a2') ->
       mkConj =<< sequence
            [ unifyTy w₁ w₂ a1 a1'
@@ -177,8 +177,8 @@ unifyATy :: forall f m γ₁ γ₂ γ
      -> m (f γ CON)
 unifyATy w₁ w₂ x y =
   case (unfoldLF x, unfoldLF y) of
-    (Weak w x', _) -> unifyATy (weakTrans w w₁) w₂ x' y
-    (_, Weak w y') -> unifyATy w₁ (weakTrans w w₂) x y'
+    (Weak w x', _) -> unifyATy (weakCompose w₁ w) w₂ x' y
+    (_, Weak w y') -> unifyATy w₁ (weakCompose w₂ w) x y'
     (TyConst c1, TyConst c2)
       | c1 == c2  -> foldLF (And [])
     (TyApp p1 m1, TyApp p2 m2) -> do
@@ -212,8 +212,8 @@ unifyATm :: forall f m γ₁ γ₂ γ
      -> UnifyResult f m γ
 unifyATm w₁ w₂ x y =
   case (unfoldLF x, unfoldLF y) of
-    (Weak w x', _) -> unifyATm (weakTrans w w₁) w₂ x' y
-    (_, Weak w y') -> unifyATm w₁ (weakTrans w w₂) x y'
+    (Weak w x', _) -> unifyATm (weakCompose w₁ w) w₂ x' y
+    (_, Weak w y') -> unifyATm w₁ (weakCompose w₂ w) x y'
     (Const c₁, Const c₂)
        | c₁ == c₂  -> UnifyDecompose (return (Just []))
        | otherwise -> UnifyDecompose (return Nothing)

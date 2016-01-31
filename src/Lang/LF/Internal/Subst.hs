@@ -28,7 +28,7 @@ lookupSubst v0 sub0 = go v0 sub0 WeakRefl
      -> Weakening γ₂ γ₃
      -> m (f γ₃ TERM)
   go v     SubstRefl         wk = aterm <$> var0 v wk
-  go v     (SubstWeak w s)   wk = go v s (weakTrans w wk)
+  go v     (SubstWeak w s)   wk = go v s (weakCompose wk w)
   go B     (SubstApply _ x)  wk = return $ weaken wk x
   go (F v) (SubstApply s _)  wk = go v s wk
   go B     (SubstSkip _)     wk = aterm <$> var0 B wk
@@ -317,8 +317,8 @@ hsubstTm sub tm =
   gosub :: forall γ₁ γ₂. Weakening γ₁ γ' -> Weakening γ₂ γ' -> f γ₁ TERM -> f γ₂ TERM -> m (f γ' TERM)
   gosub w1 w2 x' y' =
    case (unfoldLF x', unfoldLF y') of
-     (Weak w1' x'', _) -> gosub (weakTrans w1' w1) w2 x'' y'
-     (_, Weak w2' y'') -> gosub w1 (weakTrans w2' w2) x' y''
+     (Weak w1' x'', _) -> gosub (weakCompose w1 w1') w2 x'' y'
+     (_, Weak w2' y'') -> gosub w1 (weakCompose w2 w2') x' y''
      (Lam _ _ m, _) ->
         mergeWeak (weakNormalize w1) (weakNormalize w2) $ \wcommon w1' w2' ->
             weaken wcommon <$>

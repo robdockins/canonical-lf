@@ -14,7 +14,7 @@ kindViewLF :: forall f m γ γ'
 kindViewLF w k =
   case unfoldLF k of
     Weak w' x ->
-       kindViewLF (weakTrans w' w) x
+       kindViewLF (weakCompose w w') x
     Type -> VType
     KPi nm a k ->
        let a' = weaken w a in
@@ -29,7 +29,7 @@ typeViewLF :: forall f m γ γ'
 typeViewLF w a =
   case unfoldLF a of
     Weak w' x ->
-      typeViewLF (weakTrans w' w) x
+      typeViewLF (weakCompose w w') x
     AType p ->
       go w [] p
     TyPi nm a1 a2 ->
@@ -45,7 +45,7 @@ typeViewLF w a =
            -> TypeView f m γ
         go w args x =
           case unfoldLF x of
-            Weak w' x -> go (weakTrans w' w) args x
+            Weak w' x -> go (weakCompose w w') args x
             TyConst a -> VTyConst a args
             TyApp p m -> go w (weaken w m : args) p
 
@@ -58,7 +58,7 @@ termViewLF :: forall f m γ γ'
 termViewLF w m =
   case unfoldLF m of
     Weak w' x ->
-      termViewLF (weakTrans w' w) x
+      termViewLF (weakCompose w w') x
     ATerm r ->
       go w [] r
     Lam nm a body ->
@@ -74,7 +74,7 @@ termViewLF w m =
            -> TermView f m γ
        go w args r =
          case unfoldLF r of
-           Weak w' x -> go (weakTrans w' w) args x
+           Weak w' x -> go (weakCompose w w') args x
            Var       -> VVar (weakenVar w B) args
            Const c   -> VConst c args
            UVar u    -> VUVar u args
@@ -88,7 +88,7 @@ constraintViewLF :: forall f m γ γ'
            -> ConstraintView f m γ
 constraintViewLF w c =
   case unfoldLF c of
-    Weak w' x -> constraintViewLF (weakTrans w' w) x
+    Weak w' x -> constraintViewLF (weakCompose w w') x
     Fail -> VFail
     Unify r1 r2 -> VUnify (aterm (weaken w r1)) (aterm (weaken w r2))
     UnifyVar v r -> VUnifyVar v (aterm $ weaken w r)
@@ -111,7 +111,7 @@ goalViewLF :: forall f m γ γ'
            -> GoalView f m γ
 goalViewLF w g =
   case unfoldLF g of
-    Weak w' x -> goalViewLF (weakTrans w' w) x
+    Weak w' x -> goalViewLF (weakCompose w w') x
     Goal m c -> VGoal (weaken w m) (weaken w c)
     Sigma nm a g ->
        let a' = weaken w a in
