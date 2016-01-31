@@ -2,6 +2,7 @@ module Lang.LF.Internal.Basics where
 
 import           Data.Set (Set)
 import qualified Data.Set as Set
+import qualified Data.Map.Strict as Map
 
 import Lang.LF.Internal.Model
 import Lang.LF.Internal.Weak
@@ -96,11 +97,14 @@ foldFree merge z = go
       TyPi _ a1 a2 -> go f a1 `merge` go f' a2
       TyConst _ -> z
       TyApp p a -> go f p `merge` go f a
+      TyRecord flds -> foldr merge z $ map (go f) $ Map.elems flds
       Lam _ a m -> go f a `merge` go f' m
+      Record flds -> foldr merge z $ map (go f) $ Map.elems flds
       Const _ -> z
       ATerm x -> go f x
       App r m -> go f r `merge` go f m
       Var -> f B
+      Project x _ -> go f x
       Unify r1 r2 -> go f r1 `merge` go f r2
       And cs -> foldr merge z $ map (go f) cs
       Forall _ a c -> go f a `merge` go f' c
@@ -122,11 +126,14 @@ freeUVarsLF tm =
     TyPi _ a1 a2 -> Set.union (freeUVars a1) (freeUVars a2)
     TyConst _ -> Set.empty
     TyApp p a -> Set.union (freeUVars p) (freeUVars a)
+    TyRecord flds -> Set.unions $ map freeUVars $ Map.elems flds
     Lam _ a m -> Set.union (freeUVars a) (freeUVars m)
+    Record flds -> Set.unions $ map freeUVars $ Map.elems flds
     Const _ -> Set.empty
     ATerm x -> freeUVars x
     App r m -> Set.union (freeUVars r) (freeUVars m)
     Var -> Set.empty
+    Project x _ -> freeUVars x
     Unify r1 r2 -> Set.union (freeUVars r1) (freeUVars r2)
     And cs -> Set.unions (map freeUVars cs)
     Forall _ a c -> Set.union (freeUVars a) (freeUVars c)

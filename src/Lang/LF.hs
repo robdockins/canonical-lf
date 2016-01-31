@@ -83,6 +83,11 @@ module Lang.LF
 , tmConst
 , mkLam
 , mkSigma
+, mkRecord
+, mkTyRecord
+, record
+, tyRecord
+, project
 , unify
 , conj
 , cTrue

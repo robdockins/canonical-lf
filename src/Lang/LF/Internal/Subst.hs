@@ -3,6 +3,7 @@
 module Lang.LF.Internal.Subst where
 
 import Data.Proxy
+import qualified Data.Map.Strict as Map
 
 import Lang.LF.ChangeT
 import Lang.LF.Internal.Build
@@ -61,17 +62,21 @@ instantiateLF tm =
     TyPi nm t1 t2 -> onChange tm foldLF (TyPi nm <$> instantiate t1 <*> instantiate t2)
     TyConst _ -> Unchanged tm
     TyApp t m -> onChange tm foldLF (TyApp <$> instantiate t <*> instantiate m)
+    TyRecord flds -> onChange tm foldLF (TyRecord <$> traverse instantiate flds)
 
     ATerm x ->
       case go x of
         Left _  -> Unchanged tm
         Right m -> Changed m
     Lam nm ty m -> onChange tm foldLF (Lam nm <$> instantiate ty <*> instantiate m)
+    Record flds -> onChange tm foldLF (Record <$> traverse instantiate flds)
+
 
     Var -> Unchanged tm
     Const _ -> Unchanged tm
     App _ _ -> Unchanged tm
     UVar _ -> Unchanged tm
+    Project _ _ -> Unchanged tm
 
     Fail -> Unchanged tm
 
@@ -110,6 +115,10 @@ instantiateLF tm =
           Right m -> Right (weaken w <$> m)
       Var     -> Left atm
       Const _ -> Left atm
+      Project m fld ->
+        case instantiate m of
+          Unchanged _ -> Left atm
+          Changed m1' -> Right (aterm <$> (foldLF =<< (Project <$> m1' <*> return fld)))
       App m1 m2 ->
         case (go m1, instantiate m2) of
           (Left _, Unchanged _) -> Left atm
@@ -152,11 +161,13 @@ abstractLF abs tm =
 
     AType x      -> foldLF =<< (AType <$> abstractUVars abs x)
     TyPi nm a a' -> foldLF =<< (TyPi nm <$> abstractUVars abs a <*> abstractUVars abs' a')
+    TyRecord flds -> foldLF =<< (TyRecord <$> traverse (abstractUVars abs) flds)
 
     TyConst _ -> return $ weaken (absWeaken abs) tm
 
     TyApp p m    -> foldLF =<< (TyApp <$> abstractUVars abs p <*> abstractUVars abs m)
     Lam nm a m   -> foldLF =<< (Lam nm <$> abstractUVars abs a <*> abstractUVars abs' m)
+    Record flds  -> foldLF =<< (Record <$> traverse (abstractUVars abs) flds)
 
     And cs       -> foldLF . And =<< (mapM (abstractUVars abs) cs)
 
@@ -177,6 +188,8 @@ abstractLF abs tm =
 
     Var          -> return $ weaken (absWeaken abs) tm
     App x y      -> foldLF =<< (App <$> abstractUVars abs x <*> abstractUVars abs y)
+    Project m fld -> foldLF =<< (Project <$> abstractUVars abs m <*> return fld)
+
     UVar u ->
       case absUVar abs u of
         Just v ->
@@ -205,8 +218,9 @@ hsubstLF sub tm =
 
      KPi nm a k   -> foldLF =<< (KPi nm <$> hsubst sub a <*> hsubst sub' k)
 
-     AType x      -> foldLF =<< (AType <$> hsubst sub x)
-     TyPi nm a a' -> foldLF =<< (TyPi nm <$> hsubst sub a <*> hsubst sub' a')
+     AType x       -> foldLF =<< (AType <$> hsubst sub x)
+     TyPi nm a a'  -> foldLF =<< (TyPi nm <$> hsubst sub a <*> hsubst sub' a')
+     TyRecord flds -> foldLF =<< (TyRecord <$> traverse (hsubst sub) flds)
 
      TyConst _ ->
         case sub of
@@ -217,6 +231,8 @@ hsubstLF sub tm =
      TyApp p m    -> foldLF =<< (TyApp <$> hsubst sub p <*> hsubst sub m)
 
      Lam nm a m   -> foldLF =<< (Lam nm <$> hsubst sub a <*> hsubst sub' m)
+
+     Record flds -> foldLF =<< (Record <$> traverse (hsubst sub) flds)
 
      And cs       -> foldLF . And =<< (mapM (hsubst sub) cs)
 
@@ -232,11 +248,12 @@ hsubstLF sub tm =
      Goal m c      -> foldLF =<< (Goal <$> hsubst sub m <*> hsubst sub c)
      Fail          -> foldLF Fail
 
-     ATerm x      -> either return (foldLF . ATerm) =<< hsubstTm sub x
-     Const _      -> f =<< hsubstTm sub tm
-     Var          -> f =<< hsubstTm sub tm
-     App _ _      -> f =<< hsubstTm sub tm
-     UVar _       -> f =<< hsubstTm sub tm
+     ATerm x       -> either return (return . aterm) =<< hsubstTm sub x
+     Const _       -> f =<< hsubstTm sub tm
+     Var           -> f =<< hsubstTm sub tm
+     App _ _       -> f =<< hsubstTm sub tm
+     UVar _        -> f =<< hsubstTm sub tm
+     Project _ _   -> f =<< hsubstTm sub tm
 
  where
   sub' :: forall b. Subst f (γ ::> b) (γ' ::> b)
@@ -281,6 +298,17 @@ hsubstTm sub tm =
                SubstWeak w s -> either (Left . weaken w) (Right . weaken w) <$> hsubstTm s tm
                _ -> error "impossible"
 
+           Project r fld ->
+             case sub of
+               SubstRefl -> return $ Right tm
+               _ -> do
+                 r' <- hsubstTm sub r
+                 case r' of
+                   Left m' ->
+                     Left <$> goproj WeakRefl m' fld
+                   Right r'' ->
+                     Right <$> foldLF (Project r'' fld)
+
            App r1 m2 -> do
              case sub of
                SubstRefl -> return $ Right tm
@@ -294,6 +322,16 @@ hsubstTm sub tm =
                     Right <$> foldLF (App r1'' m2')
 
  where
+  goproj :: forall γ. Weakening γ γ' -> f γ TERM -> LFRecordIndex f -> m (f γ' TERM)
+  goproj w x' fld =
+    case unfoldLF x' of
+      Weak w' x'' -> goproj (weakCompose w w') x'' fld
+      Record flds ->
+        case Map.lookup fld flds of
+          Just m -> return $ weaken w m
+          Nothing -> fail "hereditary substituion failed: ill-typed record projection"
+      _ -> fail "hereditary substituion failed: ill-typed record projection"
+
   gosub :: forall γ₁ γ₂. Weakening γ₁ γ' -> Weakening γ₂ γ' -> f γ₁ TERM -> f γ₂ TERM -> m (f γ' TERM)
   gosub w1 w2 x' y' =
    case (unfoldLF x', unfoldLF y') of
@@ -304,4 +342,4 @@ hsubstTm sub tm =
             weaken wcommon <$>
               let sub' = SubstApply (SubstWeak w1' SubstRefl) (weaken w2' y') in
               hsubst sub' m
-     _ -> fail "hereditary substitution failed: ill-typed term"
+     _ -> fail "hereditary substitution failed: ill-typed function application"

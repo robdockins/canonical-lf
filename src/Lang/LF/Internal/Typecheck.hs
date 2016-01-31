@@ -1,6 +1,8 @@
 module Lang.LF.Internal.Typecheck where
 
-import Data.Set (Set)
+import           Data.Set (Set)
+import qualified Data.Map.Strict as Map
+import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
 import Lang.LF.Internal.Model
 import Lang.LF.Internal.Hyps
@@ -33,6 +35,8 @@ validateTypeLF w tm =
     TyPi nm a1 a2 -> do
       validateType w a1
       extendCtx nm QPi (weaken w a1) $ validateType (WeakSkip w) a2
+    TyRecord flds -> do
+      mapM_ (validateType w) $ Map.elems flds
     AType p ->
       checkK =<< inferKind w p
 
@@ -106,6 +110,9 @@ inferTypeLF w m =
       a <- inferAType w r
       checkTp WeakRefl a
       return a
+    Record flds -> do
+      flds' <- traverse (inferType w) flds
+      foldLF (TyRecord flds')
     Lam nm a2 m -> do
       let a2' = weaken w a2
       extendCtx nm QLam a2' $ do
@@ -118,6 +125,13 @@ inferTypeLF w m =
      case unfoldLF a of
        Weak w' x -> checkTp (weakCompose subw w') x
        AType _ -> return ()
+       TyRecord _ -> do
+           mdoc <- displayLF (weaken w m)
+           adoc <- displayLF (weaken subw a)
+           fail $ unlines ["Attempt to apply a record to some arguments"
+                          , mdoc ++ " ::"
+                          , adoc
+                          ]
        TyPi _ _ _ -> do
            mdoc <- displayLF (weaken w m)
            adoc <- displayLF (weaken subw a)
@@ -142,8 +156,30 @@ inferATypeLF w r =
     App r1 m2 -> do
       a <- inferAType w r1
       checkArg (weaken w m2) WeakRefl a
+    Project r fld -> do
+      a <- inferAType w r
+      checkRecord a WeakRefl fld
 
  where
+  checkRecord
+           :: forall γ
+            . f γ TYPE
+           -> Weakening γ γ'
+           -> LFRecordIndex f
+           -> m (f γ' TYPE)
+  checkRecord a wsub fld =
+    case unfoldLF a of
+      Weak w' x -> checkRecord x (weakCompose wsub w') fld
+      TyRecord flds ->
+        case Map.lookup fld flds of
+          Just ty -> return (weaken wsub ty)
+          Nothing -> do
+            adoc <- displayLF (weaken wsub a)
+            fail $ unwords ["Record type missing expected field", show (pretty fld), show adoc]
+      _ -> do
+          adoc <- displayLF (weaken wsub a)
+          fail $ unwords ["Expected record type", adoc]
+
   checkArg :: forall γ
             . f γ' TERM
            -> Weakening γ γ'

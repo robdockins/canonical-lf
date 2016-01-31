@@ -4,6 +4,7 @@ module Lang.LF.Internal.Model where
 --import GHC.Exts ( Constraint )
 
 import           Data.Proxy
+import           Data.Map.Strict (Map)
 import           Data.Set (Set)
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
@@ -51,6 +52,9 @@ type family LFConst (f :: Ctx * -> SORT -> *) :: *
 -- | The type used to represent unification variables
 type family LFUVar (f :: Ctx * -> SORT -> *) :: *
 
+-- | The type used to represent record indices
+type family LFRecordIndex (f :: Ctx * -> SORT -> *) :: *
+
 -- | The type used to represent solutions to constraints; these
 --   indicate how to set the values of unification variables
 type family LFSoln (f :: Ctx * -> SORT -> *) :: *
@@ -61,29 +65,33 @@ type family LFSoln (f :: Ctx * -> SORT -> *) :: *
 data LF (f :: Ctx * -> SORT -> *) :: Ctx * -> SORT -> * where
   Weak   :: !(Weakening γ γ') -> !(f γ s) -> LF f γ' s
 
-  Type   :: LF f γ KIND
-  KPi    :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) KIND) -> LF f γ KIND
+  Type     :: LF f γ KIND
+  KPi      :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) KIND) -> LF f γ KIND
 
-  AType   :: !(f γ ATYPE) -> LF f γ TYPE
-  TyPi    :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) TYPE) -> LF f γ TYPE
-  TyConst :: !(LFTypeConst f) -> LF f E ATYPE
-  TyApp   :: !(f γ ATYPE) -> !(f γ TERM) -> LF f γ ATYPE
+  AType    :: !(f γ ATYPE) -> LF f γ TYPE
+  TyPi     :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) TYPE) -> LF f γ TYPE
+  TyRecord :: Map (LFRecordIndex f) (f γ TYPE) -> LF f γ TYPE
+  TyConst  :: !(LFTypeConst f) -> LF f E ATYPE
+  TyApp    :: !(f γ ATYPE) -> !(f γ TERM) -> LF f γ ATYPE
 
-  ATerm  :: !(f γ ATERM) -> LF f γ TERM
-  Lam    :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) TERM) -> LF f γ TERM
-  Var    :: LF f (γ ::> b) ATERM
-  Const  :: !(LFConst f) -> LF f E ATERM
-  App    :: !(f γ ATERM) -> !(f γ TERM) -> LF f γ ATERM
-  UVar   :: !(LFUVar f) -> LF f E ATERM
+  ATerm    :: !(f γ ATERM) -> LF f γ TERM
+  Lam      :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) TERM) -> LF f γ TERM
+  Record   :: Map (LFRecordIndex f) (f γ TERM) -> LF f γ TERM
 
-  Fail   :: LF f γ CON
-  Unify  :: !(f γ ATERM) -> !(f γ ATERM) -> LF f γ CON
-  And    :: [f γ CON] -> LF f γ CON
-  Forall :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) CON) -> LF f γ CON
-  Exists :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) CON) -> LF f γ CON
+  Var      :: LF f (γ ::> b) ATERM
+  UVar     :: !(LFUVar f) -> LF f E ATERM
+  Const    :: !(LFConst f) -> LF f E ATERM
+  App      :: !(f γ ATERM) -> !(f γ TERM) -> LF f γ ATERM
+  Project  :: !(f γ ATERM) -> !(LFRecordIndex f) -> LF f γ ATERM
 
-  Sigma  :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) GOAL) -> LF f γ GOAL
-  Goal   :: !(f γ TERM) -> !(f γ CON) -> LF f γ GOAL
+  Fail     :: LF f γ CON
+  Unify    :: !(f γ ATERM) -> !(f γ ATERM) -> LF f γ CON
+  And      :: [f γ CON] -> LF f γ CON
+  Forall   :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) CON) -> LF f γ CON
+  Exists   :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) CON) -> LF f γ CON
+
+  Sigma    :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) GOAL) -> LF f γ GOAL
+  Goal     :: !(f γ TERM) -> !(f γ CON) -> LF f γ GOAL
 
 
 -- | A sequence of hypotheses, giving types to the free variables in γ.
@@ -188,6 +196,7 @@ data KindView f m γ where
 --   a Π binder.
 data TypeView f m γ where
  VTyConst :: LFTypeConst f -> [f γ TERM] -> TypeView f m γ
+ VTyRecord :: Map (LFRecordIndex f) (f γ TYPE) -> TypeView f m γ
  VTyPi :: forall f m γ
         . (?nms :: Set String, ?hyps :: Hyps f (γ::>()))
        => String
@@ -204,6 +213,8 @@ data TermView f m γ where
  VConst :: LFConst f -> [f γ TERM] -> TermView f m γ
  VVar   :: Var γ -> [f γ TERM] -> TermView f m γ
  VUVar  :: LFUVar f -> [f γ TERM] -> TermView f m γ
+ VRecord :: Map (LFRecordIndex f) (f γ TERM) -> TermView f m γ
+ VProject :: f γ TERM -> LFRecordIndex f -> [f γ TERM] -> TermView f m γ
  VLam   :: forall f m γ
          . (?nms :: Set String, ?hyps :: Hyps f (γ ::> ()))
         => String
@@ -251,8 +262,8 @@ data GoalView f m γ where
          -> f (γ::> ()) GOAL
          -> GoalView f m γ
 
-class (Ord (LFTypeConst f), Ord (LFConst f), Ord (LFUVar f),
-       Pretty (LFTypeConst f), Pretty (LFConst f), Pretty (LFUVar f),
+class (Ord (LFTypeConst f), Ord (LFConst f), Ord (LFUVar f), Ord (LFRecordIndex f),
+       Pretty (LFTypeConst f), Pretty (LFConst f), Pretty (LFUVar f), Pretty (LFRecordIndex f),
        Monad m)
   => LFModel (f :: Ctx * -> SORT -> *) m | f -> m, m -> f where
 

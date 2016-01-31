@@ -37,6 +37,8 @@ typeViewLF w a =
       let a2' = weaken (WeakSkip w) a2 in
       extendCtx nm QPi a1' $
         VTyPi nm B a1' a2'
+    TyRecord flds ->
+      VTyRecord (fmap (weaken w) flds)
 
   where go :: forall γ γ'
             . Weakening γ' γ
@@ -61,6 +63,8 @@ termViewLF w m =
       termViewLF (weakCompose w w') x
     ATerm r ->
       go w [] r
+    Record flds ->
+      VRecord (fmap (weaken w) flds)
     Lam nm a body ->
       let a' = weaken w a in
       let body' = weaken (WeakSkip w) body in
@@ -74,11 +78,12 @@ termViewLF w m =
            -> TermView f m γ
        go w args r =
          case unfoldLF r of
-           Weak w' x -> go (weakCompose w w') args x
-           Var       -> VVar (weakenVar w B) args
-           Const c   -> VConst c args
-           UVar u    -> VUVar u args
-           App r' m  -> go w (weaken w m : args) r'
+           Weak w' x     -> go (weakCompose w w') args x
+           Var           -> VVar (weakenVar w B) args
+           Const c       -> VConst c args
+           UVar u        -> VUVar u args
+           App r' m      -> go w (weaken w m : args) r'
+           Project x fld -> VProject (aterm $ weaken w x) fld args
 
 
 constraintViewLF :: forall f m γ γ'

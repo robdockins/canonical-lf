@@ -1,6 +1,8 @@
 module Lang.LF.Internal.Print where
 
+import           Control.Arrow ( (***) )
 import           Data.Set (Set)
+import qualified Data.Map.Strict as Map
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
 import Lang.LF.Internal.Model
@@ -10,6 +12,21 @@ import Lang.LF.Internal.Weak
 displayLF :: (LFModel f m, ?nms :: Set String, ?hyps::Hyps f γ, ?soln :: LFSoln f)
           => f γ s -> m String
 displayLF x = show <$> ppLF TopPrec WeakRefl x
+
+prettyRecord :: Monad m => [(Doc, m Doc)] -> m Doc
+prettyRecord flds = do
+   flds' <- go flds
+   return $ group $ align $ text "{" <+> flds' <> text "}"
+ where go [] = return softline
+       go [x] = go1 x
+       go (x:xs) = do
+             x' <- go1 x
+             xs' <- go xs
+             return (x' <> softline <> text "," <+> xs')
+
+       go1 (nm,x) = do
+             x' <- x
+             return $ nm <+> text ":"  <+> x'
 
 prettyLF
       :: (LFModel f m, ?nms::Set String, ?hyps::Hyps f γ', ?soln :: LFSoln f)
@@ -48,6 +65,9 @@ prettyLF prec w x =
          a2doc <- ppLF TopPrec (WeakSkip w) a2
          return $! group $ (if prec /= TopPrec then parens else id) $
            (align (a1doc <+> text "⇒" <> softline <> a2doc))
+    TyRecord flds -> do
+      prettyRecord $ map (pretty *** ppLF TopPrec w) $ Map.toList flds
+
     TyConst x -> return $ pretty x
     TyApp p a -> do
          pdoc <- ppLF AppLPrec w p
@@ -64,6 +84,8 @@ prettyLF prec w x =
          mdoc <- extendCtx nm QLam (weaken w a) $ ppLF TopPrec (WeakSkip w) m
          return $! (if prec /= TopPrec then parens else id) $
            text "λ" <> text nm' <+> colon <+> adoc <> comma <> nest 2 (softline <> mdoc)
+    Record flds -> do
+      prettyRecord $ map (pretty *** ppLF TopPrec w) $ Map.toList flds
     Const x -> return $ pretty x
     App m1 m2 -> do
          m1doc <- ppLF AppLPrec w m1
@@ -75,6 +97,10 @@ prettyLF prec w x =
        in return $ text nm
 
     UVar u -> return (text "#" <> pretty u)
+
+    Project x fld -> do
+         xdoc <- ppLF AppLPrec w x
+         return $ xdoc <> text "->" <> pretty fld
 
     Unify r1 r2 -> do
          r1doc <- ppLF TopPrec w r1

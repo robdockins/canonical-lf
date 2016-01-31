@@ -79,6 +79,7 @@ emptyUVarState =
 type instance LFTypeConst (LFTree a c) = a
 type instance LFConst (LFTree a c) = c
 type instance LFUVar (LFTree a c) = Integer
+type instance LFRecordIndex (LFTree a c) = String
 type instance LFSoln (LFTree a c) = Soln a c
 
 newtype M a c x = M { unM :: ReaderT (Signature a c) (StateT (UVarState a c) (Except String)) x }

@@ -1,8 +1,12 @@
 module Lang.LF.Internal.Build where
 
-import Control.Monad (join)
-import Data.Proxy
-import Data.Set (Set)
+import           Control.Monad (join)
+import           Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import           Data.Proxy
+import           Data.Set (Set)
+import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
+
 
 import Lang.LF.Internal.Model
 import Lang.LF.Internal.Hyps
@@ -138,6 +142,8 @@ tyApp a m = join (go WeakRefl WeakRefl <$> a <*> m)
      (AType p, _) ->
        mergeWeak (weakNormalize w1) (weakNormalize w2) $ \wcommon w1' w2' ->
          weaken wcommon . atype <$> foldLF (TyApp (weaken w1' p) (weaken w2' m'))
+     (TyRecord _, _) ->
+        fail $ unwords ["Cannot apply terms to record Types"]
      (TyPi _ _ _, _) ->
         fail $ unwords ["Cannot apply terms to Pi Types"]
 
@@ -155,6 +161,61 @@ tmConst :: (LiftClosed γ, LFModel f m) => LFConst f -> m (f γ TERM)
 tmConst x = liftClosed <$> (foldLF . ATerm =<< foldLF (Const x))
 
 
+mkRecord :: LFModel f m
+         => Map (LFRecordIndex f) (f γ TERM)
+         -> m (f γ TERM)
+mkRecord flds = foldLF (Record flds)
+
+record :: LFModel f m
+       => [(LFRecordIndex f, m (f γ TERM))]
+       -> m (f γ TERM)
+record = go Map.empty
+  where go flds [] = mkRecord flds
+        go flds ((nm,m):xs) = do
+             x <- m
+             case Map.lookup nm flds of
+                Nothing -> go (Map.insert nm x flds) xs
+                Just _ -> fail $ "Record field referenced more than once: " ++ (show (pretty nm))
+
+mkTyRecord :: LFModel f m
+           => Map (LFRecordIndex f) (f γ TYPE)
+           -> m (f γ TYPE)
+mkTyRecord flds = foldLF (TyRecord flds)
+
+tyRecord :: LFModel f m
+       => [(LFRecordIndex f, m (f γ TYPE))]
+       -> m (f γ TYPE)
+tyRecord = go Map.empty
+  where go flds [] = mkTyRecord flds
+        go flds ((nm,m):xs) = do
+             x <- m
+             case Map.lookup nm flds of
+                Nothing -> go (Map.insert nm x flds) xs
+                Just _ -> fail $ "Record field referenced more than once: " ++ (show (pretty nm))
+
+project :: forall m f γ
+         . LFModel f m
+        => m (f γ TERM)
+        -> LFRecordIndex f
+        -> m (f γ TERM)
+project x0 fld = join (go WeakRefl <$> x0)
+ where
+   go :: forall γ'
+       . Weakening γ' γ
+      -> f γ' TERM
+      -> m (f γ TERM)
+   go w x =
+     case unfoldLF x of
+       Weak w' x' -> go (weakCompose w w') x'
+       ATerm r    -> weaken w . aterm <$> foldLF (Project r fld)
+       Lam _ _ _  ->
+         fail "Cannot project from lambda terms"
+       Record flds ->
+         case Map.lookup fld flds of
+           Just m -> return (weaken w m)
+           Nothing ->
+             fail $ "missing record field: " ++ show (pretty fld)
+
 app :: forall m f γ. (LFModel f m)
     => m (f γ TERM)
     -> m (f γ TERM)
@@ -170,6 +231,8 @@ app x y = join (go WeakRefl WeakRefl <$> x <*> y)
      (ATerm r, _) ->
         mergeWeak (weakNormalize w1) (weakNormalize w2) $ \wcommon w1' w2' ->
           weaken wcommon . aterm <$> foldLF (App (weaken w1' r) (weaken w2' y'))
+     (Record _, _) ->
+        fail "cannot apply values to records"
      (Lam _ _ m, _) ->
         mergeWeak (weakNormalize w1) (weakNormalize w2) $ \wcommon w1' w2' ->
           weaken wcommon <$>
