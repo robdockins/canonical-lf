@@ -94,9 +94,6 @@ mergeWeak :: Weakening γ₁ γ
           -> Weakening γ₂ γ
           -> (forall γ'. Weakening γ' γ -> Weakening γ₁ γ' -> Weakening γ₂ γ' -> x)
           -> x
-mergeWeak WeakRefl w₂ k = k WeakRefl WeakRefl w₂
-mergeWeak w₁ WeakRefl k = k WeakRefl w₁ WeakRefl
-
 mergeWeak (WeakR w₁) (WeakR w₂) k =
   mergeWeak w₁ w₂ $ \w w₁' w₂' ->
     k (WeakR w) w₁' w₂'
@@ -105,9 +102,13 @@ mergeWeak (WeakSkip w₁) (WeakSkip w₂) k =
   mergeWeak w₁ w₂ $ \w w₁' w₂' ->
     k (weakSkip w) (weakSkip w₁') (weakSkip w₂')
 
-mergeWeak (WeakL w₁) (WeakL w₂) k =
+mergeWeak (WeakSkip w₁) (WeakR w₂) k =
   mergeWeak w₁ w₂ $ \w w₁' w₂' ->
-    k w (WeakL w₁') (WeakL w₂')
+    k (weakSkip w) (weakSkip w₁') (WeakR w₂')
+
+mergeWeak (WeakR w₁) (WeakSkip w₂) k =
+  mergeWeak w₁ w₂ $ \w w₁' w₂' ->
+    k (weakSkip w) (WeakR w₁') (weakSkip w₂')
 
 mergeWeak w₁ w₂ k =
   k WeakRefl w₁ w₂
@@ -123,8 +124,9 @@ substWeak :: Subst f γ₂ γ₃
 substWeak s WeakRefl k = k WeakRefl s
 substWeak SubstRefl w k = k w SubstRefl
 
-substWeak (SubstWeak w s) w' k =
-  substWeak s (weakTrans w' w) k
+substWeak (SubstWeak w0 s) w k =
+  substWeak s w $ \w' s' ->
+    k (weakTrans w' w0) s'
 
 substWeak (SubstSkip s) (WeakR w) k =
   substWeak s w $ \w' s' ->
@@ -136,7 +138,8 @@ substWeak (SubstSkip s) (WeakSkip w) k =
 substWeak (SubstApply s _f) (WeakR w) k =
   substWeak s w k
 substWeak (SubstApply s f) (WeakSkip w) k =
-  k WeakRefl (SubstApply (SubstWeak w s) f)
+  substWeak s w $ \w' s' ->
+    k WeakRefl (SubstApply (SubstWeak w' s') f)
 
 substWeak s (WeakL w) k =
   substWeak s w $ \w' s' ->

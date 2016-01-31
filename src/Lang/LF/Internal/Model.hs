@@ -155,7 +155,7 @@ data Weakening γ γ' where
 data Subst f :: Ctx * -> Ctx * -> * where
   SubstRefl  :: Subst f γ γ
   SubstApply :: Subst f γ γ' -> f γ' TERM -> Subst f (γ ::> b) γ'
-  SubstWeak  :: Weakening γ₁ γ₂ -> Subst f γ₂ γ₃ -> Subst f γ₁ γ₃
+  SubstWeak  :: Weakening γ₂ γ₃ -> Subst f γ₁ γ₂ -> Subst f γ₁ γ₃
   SubstSkip  :: Subst f γ γ' -> Subst f (γ ::> b) (γ' ::> b)
 
 

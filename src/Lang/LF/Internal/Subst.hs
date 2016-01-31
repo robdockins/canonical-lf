@@ -10,10 +10,10 @@ import Lang.LF.Internal.Model
 import Lang.LF.Internal.Solve
 import Lang.LF.Internal.Weak
 
-weakSubst :: Weakening γ₁ γ₂
-          -> Subst f γ₂ γ₃
+weakSubst :: Subst f γ₂ γ₃
+          -> Weakening γ₁ γ₂
           -> Subst f γ₁ γ₃
-weakSubst = SubstWeak
+weakSubst s w = substWeak s w SubstWeak
 
 lookupSubst :: forall f m γ₁ γ₂
              . (LFModel f m)
@@ -28,7 +28,7 @@ lookupSubst v0 sub0 = go v0 sub0 WeakRefl
      -> Weakening γ₂ γ₃
      -> m (f γ₃ TERM)
   go v     SubstRefl         wk = aterm <$> var0 v wk
-  go v     (SubstWeak w s)   wk = go (weakenVar w v) s wk
+  go v     (SubstWeak w s)   wk = go v s (weakTrans w wk)
   go B     (SubstApply _ x)  wk = return $ weaken wk x
   go (F v) (SubstApply s _)  wk = go v s wk
   go B     (SubstSkip _)     wk = aterm <$> var0 B wk
@@ -210,7 +210,7 @@ hsubstLF :: forall f m s γ γ'
          -> f γ s
          -> m (f γ' s)
 hsubstLF SubstRefl tm = return tm
-hsubstLF (SubstWeak w s) tm = hsubst s (weaken w tm)
+hsubstLF (SubstWeak w s) tm = weaken w <$> hsubst s tm
 hsubstLF sub tm =
   case unfoldLF tm of
      Weak w x ->
@@ -227,7 +227,7 @@ hsubstLF sub tm =
      TyConst _ ->
         case sub of
           SubstRefl   -> return tm
-          SubstWeak w s -> hsubst s (weaken w tm)
+          SubstWeak w s -> weaken w <$> hsubst s tm
           _ -> error "impossible"
 
      TyApp p m    -> foldLF =<< (TyApp <$> hsubst sub p <*> hsubst sub m)
@@ -282,7 +282,7 @@ hsubstTm sub tm =
            Var ->
              case sub of
                SubstRefl      -> return $ Right tm
-               SubstWeak w s  -> hsubstTm s (weaken w tm)
+               SubstWeak w s  -> either (Left . weaken w) (Right . weaken w) <$> hsubstTm s tm
                SubstApply _ x -> return $ Left x
                SubstSkip _    -> Right <$> foldLF Var
 
@@ -292,13 +292,13 @@ hsubstTm sub tm =
                  case lookupUVar Proxy u ?soln of
                    Just m  -> return $ Left m
                    Nothing -> return $ Right tm
-               SubstWeak w s -> hsubstTm s (weaken w tm)
+               SubstWeak w s -> either (Left . weaken w) (Right . weaken w) <$> hsubstTm s tm
                _ -> error "impossible"
 
            Const _ ->
              case sub of
                SubstRefl   -> return $ Right tm
-               SubstWeak w s -> hsubstTm s (weaken w tm)
+               SubstWeak w s -> either (Left . weaken w) (Right . weaken w) <$> hsubstTm s tm
                _ -> error "impossible"
 
            App r1 m2 -> do
