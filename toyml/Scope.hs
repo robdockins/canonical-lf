@@ -14,7 +14,7 @@ scopeAnalysis
      , ?hyps :: Hyps LF γ
      , ?nms :: Set String
      )
-  => Map String (Var γ)
+  => Map String (LF γ TERM)
   -> AST
   -> M (LF γ TERM)
 scopeAnalysis symbolTable t =
@@ -22,20 +22,22 @@ scopeAnalysis symbolTable t =
     Ident nm ->
       case Map.lookup nm symbolTable of
         Just v  ->
-          "ml_var" @@ var v
+          "ml_var" @@ return v
         Nothing ->
           fail $ concat ["identifier '", nm, "' not in scope"]
 
     Fn nm m ->
       "ml_lam" @@ (λ nm v $ \x -> do
-        let symbolTable' = Map.insert nm x $ fmap F symbolTable
+        x' <- var x
+        let symbolTable' = Map.insert nm x' $ fmap weak symbolTable
         scopeAnalysis symbolTable' m)
 
     Letval nm m body ->
       "ml_letval"
         @@ (scopeAnalysis symbolTable m)
         @@ (λ nm v $ \x -> do
-              let symbolTable' = Map.insert nm x $ fmap F symbolTable
+              x' <- var x
+              let symbolTable' = Map.insert nm x' $ fmap weak symbolTable
               scopeAnalysis symbolTable' body)
 
     Tt -> "ml_tt"
@@ -45,14 +47,16 @@ scopeAnalysis symbolTable t =
         @@ scopeAnalysis symbolTable a
         @@ scopeAnalysis symbolTable b
 
-    Case e (lnm,lbranch) (rnm, rbranch) ->
+    Case e (lnm, lbranch) (rnm, rbranch) ->
       "ml_case"
         @@ scopeAnalysis symbolTable e
         @@ (λ lnm v $ \x -> do
-              let symbolTable' = Map.insert lnm x $ fmap F symbolTable
+              x' <- var x
+              let symbolTable' = Map.insert lnm x' $ fmap weak symbolTable
               scopeAnalysis symbolTable' lbranch)
         @@ (λ rnm v $ \x -> do
-              let symbolTable' = Map.insert rnm x $ fmap F symbolTable
+              x' <- var x
+              let symbolTable' = Map.insert rnm x' $ fmap weak symbolTable
               scopeAnalysis symbolTable' rbranch)
 
     Pair a b ->

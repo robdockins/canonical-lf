@@ -45,6 +45,14 @@ sig = buildSignature
   , "ty"       ::. lf_type
   , "scheme"   ::. lf_type
 
+  , "unit"      :. ty
+  , "arr"       :. ty ==> ty ==> ty
+  , "prod"      :. ty ==> ty ==> ty
+  , "sum"       :. ty ==> ty ==> ty
+
+  , "scheme_ty"     :. ty ==> scheme
+  , "scheme_forall" :. (ty ==> scheme) ==> scheme
+
   , "letval"   :. val ==> (v ==> tm) ==> tm
   , "letcont"  :. (v ==> tm) ==> (kv ==> tm) ==> tm
   , "let_prj1" :. v ==> (v ==> tm) ==> tm
@@ -70,14 +78,6 @@ sig = buildSignature
   , "ml_inr"    :. ml ==> ml
   , "ml_letval" :. ml ==> (v ==> ml) ==> ml
   , "ml_case"   :. ml ==> (v ==> ml) ==> (v ==> ml) ==> ml
-
-  , "unit"      :. ty
-  , "arr"       :. ty ==> ty ==> ty
-  , "prod"      :. ty ==> ty ==> ty
-  , "sum"       :. ty ==> ty ==> ty
-
-  , "sch_ty"     :. ty ==> scheme
-  , "sch_forall" :. (ty ==> scheme) ==> scheme
 
   , "tt_CAF" :. v
   , "f" :. v
@@ -117,4 +117,3 @@ ty = tyConst "ty"
 
 scheme :: LiftClosed γ => M (LF γ TYPE)
 scheme = tyConst "scheme"
-

@@ -41,10 +41,10 @@ instantiateScheme
    => Subst LF γ E
    -> LF γ TERM
    -> M (LF E TERM)
-instantiateScheme sub (termView -> VConst "sch_ty" [t]) =
+instantiateScheme sub (termView -> VConst "scheme_ty" [t]) =
   hsubst sub t
 
-instantiateScheme sub (termView -> VConst "sch_forall"
+instantiateScheme sub (termView -> VConst "scheme_forall"
                                      [termView -> VLam _nm _x _t m]) = do
   newty <- uvar =<< freshUVar =<< ty
   let sub' = SubstApply sub newty
@@ -55,6 +55,7 @@ instantiateScheme _ m = do
   fail $ unlines [ "Unexpected term in instantiate:"
                  , show $ indent 2 mdoc
                  ]
+
 
 subFreeUVars :: LFModel f m
               => Subst f γ γ'
@@ -74,7 +75,7 @@ generalize
    -> StateT [LF E CON] M (LF E TERM, LFSoln LF)
 {-
 generalize _ t = do
-    x <- lift ("sch_ty" @@ return t)
+    x <- lift ("scheme_ty" @@ return t)
     Debug.trace "no generalization" $
       return (x, ?soln)
 -}
@@ -102,11 +103,11 @@ generalize sub t = do
           -> M (LF γ' TERM)
        go t abs [] = do
           t' <- abstractUVars abs t
-          "sch_ty" @@ return t'
+          "scheme_ty" @@ return t'
        go t abs (u:us) = do
           t' <- go t (AbstractApply abs u) us
           ty' <- ty
-          "sch_forall" @@ mkLam "u" B ty' t'
+          "scheme_forall" @@ mkLam "u" B ty' t'
 
 
 tc :: ( LiftClosed γ
@@ -133,7 +134,7 @@ tc sub (termView -> VConst "ml_app" [a,b]) = do
 
 tc sub (termView -> VConst "ml_lam" [termView -> VLam _nm _x _t m]) = do
   targ <- lift (uvar =<< freshUVar =<< ty)
-  sub' <- lift (SubstApply sub <$> ("sch_ty" @@ (return $ liftClosed targ)))
+  sub' <- lift (SubstApply sub <$> ("scheme_ty" @@ (return $ liftClosed targ)))
   tres <- tc sub' m
   lift ("arr" @@ return targ @@ return tres)
 
@@ -186,8 +187,8 @@ tc sub (termView -> VConst "ml_case" [e,l,r]) = do
   ety <- tc sub e
   addConstraint $
     unify (return ety) ("sum" @@ return lty @@ return rty)
-  subl <- lift (SubstApply sub <$> ("sch_ty" @@ (return $ liftClosed lty)))
-  subr <- lift (SubstApply sub <$> ("sch_ty" @@ (return $ liftClosed rty)))
+  subl <- lift (SubstApply sub <$> ("scheme_ty" @@ (return $ liftClosed lty)))
+  subr <- lift (SubstApply sub <$> ("scheme_ty" @@ (return $ liftClosed rty)))
 
   xl <- case termView l of
           VLam _nm _x _t lm -> tc subl lm
