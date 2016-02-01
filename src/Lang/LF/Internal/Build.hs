@@ -1,10 +1,11 @@
 module Lang.LF.Internal.Build where
 
 import           Control.Monad (join)
+import           Data.Set (Set)
+import qualified Data.Set as Set
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Proxy
-import           Data.Set (Set)
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
 
@@ -99,20 +100,20 @@ instance LFPi TYPE where
     a   <- extendCtx nm QPi tp' $ f B
     foldLF (TyPi nm tp' a)
 
-class LFFunc (s::SORT) where
-  (==>) :: (LFModel f m) => m (f γ TYPE) -> m (f γ s) -> m (f γ s)
+class LFFunc (sarg::SORT) (s::SORT) where
+  (==>) :: (LFModel f m) => m (f γ sarg) -> m (f γ s) -> m (f γ s)
 
-instance LFFunc KIND where
+instance LFFunc TYPE KIND where
   (==>) = kArrow
-instance LFFunc TYPE where
+instance LFFunc TYPE TYPE where
   (==>) = tyArrow
 
-class LFApplication (s::SORT) where
-  (@@) :: (LFModel f m) => m (f γ s) -> m (f γ TERM) -> m (f γ s)
+class LFApplication (s::SORT) (sarg::SORT) where
+  (@@) :: (LFModel f m) => m (f γ s) -> m (f γ sarg) -> m (f γ s)
 
-instance LFApplication TYPE where
+instance LFApplication TYPE TERM where
   (@@) = tyApp
-instance LFApplication TERM where
+instance LFApplication TERM TERM where
   (@@) = app
 
 tyArrow :: (LFModel f m) => m (f γ TYPE) -> m (f γ TYPE) -> m (f γ TYPE)
@@ -146,6 +147,8 @@ tyApp a m = join (go WeakRefl WeakRefl <$> a <*> m)
         fail $ unwords ["Cannot apply terms to record Types"]
      (TyPi _ _ _, _) ->
         fail $ unwords ["Cannot apply terms to Pi Types"]
+     (TyRow _ , _) ->
+        fail $ unwords ["Cannot apply terms to row Types"]
 
 mkLam :: LFModel f m => String -> Var (γ::>()) -> f γ TYPE -> f (γ::>()) TERM -> m (f γ TERM)
 mkLam nm B a m = do
@@ -177,21 +180,90 @@ record = go Map.empty
                 Nothing -> go (Map.insert nm x flds) xs
                 Just _ -> fail $ "Record field referenced more than once: " ++ (show (pretty nm))
 
-mkTyRecord :: LFModel f m
-           => Map (LFRecordIndex f) (f γ TYPE)
-           -> m (f γ TYPE)
-mkTyRecord flds = foldLF (TyRecord flds)
+extendRecord :: LFModel f m
+          => m (f γ TERM)
+          -> LFRecordIndex f
+          -> m (f γ TERM)
+          -> m (f γ TERM)
+extendRecord r fld m = do
+  r' <- r
+  m' <- m
+  recordModify r' WeakRefl Set.empty (Map.singleton fld m')
 
-tyRecord :: LFModel f m
+restrictRecord :: LFModel f m
+          => m (f γ TERM)
+          -> LFRecordIndex f
+          -> m (f γ TERM)
+restrictRecord r fld = do
+  r' <- r
+  recordModify r' WeakRefl (Set.singleton fld) Map.empty
+
+updateRecord :: LFModel f m
+          => m (f γ TERM)
+          -> LFRecordIndex f
+          -> m (f γ TERM)
+          -> m (f γ TERM)
+updateRecord r fld m = do
+  r' <- r
+  m' <- m
+  recordModify r' WeakRefl (Set.singleton fld) (Map.singleton fld m')
+
+
+rowTy :: LFModel f m
+      => [LFRecordIndex f]
+      -> m (f γ TYPE)
+rowTy = go Set.empty
+ where go flds [] = foldLF (TyRow (NegFieldSet flds))
+       go flds (nm:xs) =
+          if Set.member nm flds then
+            fail $ "Record field reverenced more than once: " ++ show (pretty nm)
+          else
+            go (Set.insert nm flds) xs
+
+recordTy :: LFModel f m
+           => m (f γ TERM)
+           -> m (f γ TYPE)
+recordTy row = foldLF . TyRecord =<< row
+
+row :: LFModel f m
        => [(LFRecordIndex f, m (f γ TYPE))]
-       -> m (f γ TYPE)
-tyRecord = go Map.empty
-  where go flds [] = mkTyRecord flds
+       -> m (f γ TERM)
+row = go Map.empty
+  where go flds [] = foldLF (Row flds)
         go flds ((nm,m):xs) = do
              x <- m
              case Map.lookup nm flds of
                 Nothing -> go (Map.insert nm x flds) xs
                 Just _ -> fail $ "Record field referenced more than once: " ++ (show (pretty nm))
+
+extendRow :: LFModel f m
+          => m (f γ TERM)
+          -> LFRecordIndex f
+          -> m (f γ TYPE)
+          -> m (f γ TERM)
+extendRow row fld ty = do
+  row' <- row
+  ty' <- ty
+  rowModify row' WeakRefl Set.empty (Map.singleton fld ty')
+
+restrictRow :: LFModel f m
+          => m (f γ TERM)
+          -> LFRecordIndex f
+          -> m (f γ TERM)
+restrictRow row fld = do
+  row' <- row
+  rowModify row' WeakRefl (Set.singleton fld) Map.empty
+
+updateRow :: LFModel f m
+          => m (f γ TERM)
+          -> LFRecordIndex f
+          -> m (f γ TYPE)
+          -> m (f γ TERM)
+updateRow row fld ty = do
+  row' <- row
+  ty' <- ty
+  rowModify row' WeakRefl (Set.singleton fld) (Map.singleton fld ty')
+
 
 project :: forall m f γ
          . LFModel f m
@@ -210,11 +282,72 @@ project x0 fld = join (go WeakRefl <$> x0)
        ATerm r    -> weaken w . aterm <$> foldLF (Project r fld)
        Lam _ _ _  ->
          fail "Cannot project from lambda terms"
+       Row{} ->
+         fail "Cannot project from row terms"
+       RowModify{} ->
+         fail "Cannot project from row terms"
+
        Record flds ->
          case Map.lookup fld flds of
            Just m -> return (weaken w m)
            Nothing ->
              fail $ "missing record field: " ++ show (pretty fld)
+       RecordModify _ _ insMap ->
+         case Map.lookup fld insMap of
+           Just m -> return (weaken w m)
+           Nothing ->
+             fail $ "possibly missing record field: " ++ show (pretty fld)
+
+
+recordModify :: LFModel f m
+          => f γ TERM
+          -> Weakening γ γ'
+          -> Set (LFRecordIndex f)
+          -> Map (LFRecordIndex f) (f γ' TERM)
+          -> m (f γ' TERM)
+recordModify m w del ins =
+  case unfoldLF m of
+    Weak w' m' -> recordModify m' (weakCompose w w') del ins
+    Record flds -> do
+        let flds'   = Map.filterWithKey (\k _ -> not (Set.member k del)) (fmap (weaken w) flds)
+        let flds'' = Map.union flds' ins
+        foldLF (Record flds'')
+    RecordModify r del0 ins0 -> do
+        let ins0'  = Map.filterWithKey (\k _ -> not (Set.member k del)) (fmap (weaken w) ins0)
+        let ins0'' = Map.union ins0' ins
+        let del0'  = Set.union del0 (Set.difference del (Map.keysSet ins0))
+        foldLF (RecordModify (weaken w r) del0' ins0'')
+    ATerm r -> foldLF (RecordModify (weaken w r) del ins)
+
+    Lam _ _ _ -> fail "Expected record value"
+    Row{} -> fail "Expected record value"
+    RowModify{} -> fail "Expected record value"
+  
+
+rowModify :: LFModel f m
+          => f γ TERM
+          -> Weakening γ γ'
+          -> Set (LFRecordIndex f)
+          -> Map (LFRecordIndex f) (f γ' TYPE)
+          -> m (f γ' TERM)
+rowModify m w del ins =
+  case unfoldLF m of
+    Weak w' m' -> rowModify m' (weakCompose w w') del ins
+    Row row -> do
+        let row'  = Map.filterWithKey (\k _ -> not (Set.member k del)) (fmap (weaken w) row)
+        let row'' = Map.union row' ins
+        foldLF (Row row'')
+    RowModify r del0 ins0 -> do
+        let ins0'  = Map.filterWithKey (\k _ -> not (Set.member k del)) (fmap (weaken w) ins0)
+        let ins0'' = Map.union ins0' ins
+        let del0' = Set.union del0 (Set.difference del (Map.keysSet ins0))
+        foldLF (RowModify (weaken w r) del0' ins0'')
+    ATerm r -> foldLF (RowModify (weaken w r) del ins)
+    Lam _ _ _ -> fail "Expected row value"
+    Record _ -> fail "Expected row value"
+    RecordModify{} -> fail "Expected row value"
+
+
 
 app :: forall m f γ. (LFModel f m)
     => m (f γ TERM)
@@ -233,6 +366,12 @@ app x y = join (go WeakRefl WeakRefl <$> x <*> y)
           weaken wcommon . aterm <$> foldLF (App (weaken w1' r) (weaken w2' y'))
      (Record _, _) ->
         fail "cannot apply values to records"
+     (RecordModify{}, _) ->
+        fail "cannot apply values to records"
+     (Row{}, _) ->
+        fail "cannot apply values to rows"
+     (RowModify{}, _) ->
+        fail "cannot apply values to rows"
      (Lam _ _ m, _) ->
         mergeWeak (weakNormalize w1) (weakNormalize w2) $ \wcommon w1' w2' ->
           weaken wcommon <$>

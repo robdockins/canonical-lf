@@ -6,6 +6,7 @@ module Lang.LF.Internal.Model where
 import           Data.Proxy
 import           Data.Map.Strict (Map)
 import           Data.Set (Set)
+import qualified Data.Set as Set
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
 import           Lang.LF.ChangeT
@@ -59,6 +60,51 @@ type family LFRecordIndex (f :: Ctx * -> SORT -> *) :: *
 --   indicate how to set the values of unification variables
 type family LFSoln (f :: Ctx * -> SORT -> *) :: *
 
+data FieldSet f
+  = PosFieldSet (Set (LFRecordIndex f)) -- means the set X
+  | NegFieldSet (Set (LFRecordIndex f)) -- means the set (Fields - X)
+
+instance LFModel f m => Eq (FieldSet f) where
+  (PosFieldSet x) == (PosFieldSet y) = x == y
+  (NegFieldSet x) == (NegFieldSet y) = x == y
+  _ == _ = False
+
+fieldSetComplement 
+  :: LFModel f m => FieldSet f -> FieldSet f
+fieldSetComplement (PosFieldSet x) = NegFieldSet x
+fieldSetComplement (NegFieldSet x) = PosFieldSet x
+
+fieldSetSubset
+  :: LFModel f m => FieldSet f -> FieldSet f -> Bool
+fieldSetSubset x y = fieldSetNull (fieldSetDifference x y)
+
+fieldSetDisjoint 
+  :: LFModel f m => FieldSet f -> FieldSet f -> Bool
+fieldSetDisjoint x y = fieldSetNull (fieldSetIntersection x y)
+
+fieldSetNull 
+  :: LFModel f m => FieldSet f -> Bool
+fieldSetNull (PosFieldSet x) = Set.null x
+fieldSetNull (NegFieldSet _) = False
+
+fieldSetUnion
+  :: LFModel f m => FieldSet f -> FieldSet f -> FieldSet f
+fieldSetUnion (PosFieldSet x) (PosFieldSet y) = PosFieldSet (Set.union x y)
+fieldSetUnion (PosFieldSet x) (NegFieldSet y) = NegFieldSet (Set.difference y x)
+fieldSetUnion (NegFieldSet x) (PosFieldSet y) = NegFieldSet (Set.difference x y)
+fieldSetUnion (NegFieldSet x) (NegFieldSet y) = NegFieldSet (Set.intersection x y)
+
+fieldSetIntersection
+  :: LFModel f m => FieldSet f -> FieldSet f -> FieldSet f
+fieldSetIntersection (PosFieldSet x) (PosFieldSet y) = PosFieldSet (Set.intersection x y)
+fieldSetIntersection (PosFieldSet x) (NegFieldSet y) = PosFieldSet (Set.difference x y)
+fieldSetIntersection (NegFieldSet x) (PosFieldSet y) = PosFieldSet (Set.difference y x)
+fieldSetIntersection (NegFieldSet x) (NegFieldSet y) = NegFieldSet (Set.union x y)
+
+fieldSetDifference
+  :: LFModel f m => FieldSet f -> FieldSet f -> FieldSet f
+fieldSetDifference x y = fieldSetIntersection x (fieldSetComplement y)
+
 -- | The syntax algebra of canonical LF terms, parameterized
 --   by `γ`, a context of free variables and `s` the syntactic sort
 --   of the term.
@@ -70,19 +116,34 @@ data LF (f :: Ctx * -> SORT -> *) :: Ctx * -> SORT -> * where
 
   AType    :: !(f γ ATYPE) -> LF f γ TYPE
   TyPi     :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) TYPE) -> LF f γ TYPE
-  TyRecord :: Map (LFRecordIndex f) (f γ TYPE) -> LF f γ TYPE
+  TyRecord :: f γ TERM -> LF f γ TYPE
+  TyRow    :: FieldSet f -> LF f γ TYPE
+                -- This set defines an _overapproximation_ of the
+                -- set of fields defined in the row.  Thus, if:
+                -- f ∉ fs and r : row fs, then row r does not define field f.
+                -- In particular, if r : row ∅, then r must be the empty row.
+
   TyConst  :: !(LFTypeConst f) -> LF f E ATYPE
   TyApp    :: !(f γ ATYPE) -> !(f γ TERM) -> LF f γ ATYPE
 
   ATerm    :: !(f γ ATERM) -> LF f γ TERM
   Lam      :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) TERM) -> LF f γ TERM
+  Row      :: Map (LFRecordIndex f) (f γ TYPE) -> LF f γ TERM
+  RowModify :: !(f γ ATERM)
+            -> !(Set (LFRecordIndex f))            -- fields to delete
+            -> !(Map (LFRecordIndex f) (f γ TYPE)) -- fields to add
+            -> LF f γ TERM
   Record   :: Map (LFRecordIndex f) (f γ TERM) -> LF f γ TERM
+  RecordModify :: !(f γ ATERM)
+            -> !(Set (LFRecordIndex f))            -- fields to delete
+            -> !(Map (LFRecordIndex f) (f γ TERM)) -- fields to add
+            -> LF f γ TERM
 
-  Var      :: LF f (γ ::> b) ATERM
-  UVar     :: !(LFUVar f) -> LF f E ATERM
-  Const    :: !(LFConst f) -> LF f E ATERM
-  App      :: !(f γ ATERM) -> !(f γ TERM) -> LF f γ ATERM
-  Project  :: !(f γ ATERM) -> !(LFRecordIndex f) -> LF f γ ATERM
+  Var       :: LF f (γ ::> b) ATERM
+  UVar      :: !(LFUVar f) -> LF f E ATERM
+  Const     :: !(LFConst f) -> LF f E ATERM
+  App       :: !(f γ ATERM) -> !(f γ TERM) -> LF f γ ATERM
+  Project   :: !(f γ ATERM) -> !(LFRecordIndex f) -> LF f γ ATERM
 
   Fail     :: LF f γ CON
   Unify    :: !(f γ ATERM) -> !(f γ ATERM) -> LF f γ CON
@@ -114,6 +175,8 @@ data Prec
   | AppLPrec
   | AppRPrec
   | BinderPrec
+  | RecordPrec
+  | RowPrec
  deriving (Eq)
 
 
@@ -196,7 +259,7 @@ data KindView f m γ where
 --   a Π binder.
 data TypeView f m γ where
  VTyConst :: LFTypeConst f -> [f γ TERM] -> TypeView f m γ
- VTyRecord :: Map (LFRecordIndex f) (f γ TYPE) -> TypeView f m γ
+ VTyRecord :: f γ TERM -> TypeView f m γ
  VTyPi :: forall f m γ
         . (?nms :: Set String, ?hyps :: Hyps f (γ::>()))
        => String

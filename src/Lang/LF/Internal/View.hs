@@ -37,8 +37,8 @@ typeViewLF w a =
       let a2' = weaken (WeakSkip w) a2 in
       extendCtx nm QPi a1' $
         VTyPi nm B a1' a2'
-    TyRecord flds ->
-      VTyRecord (fmap (weaken w) flds)
+    TyRecord row -> VTyRecord (weaken w row)
+    TyRow _ -> error "FIXME: implement TyRow view"
 
   where go :: forall γ γ'
             . Weakening γ' γ
@@ -70,6 +70,10 @@ termViewLF w m =
       let body' = weaken (WeakSkip w) body in
       extendCtx nm QLam a' $
         VLam nm B a' body'
+
+    Row{} -> error "FIXME: implement row view"
+    RowModify{} -> error "FIXME: implement row modify view"
+    RecordModify{} -> error "FIXME: implement record modify view"
 
  where go :: forall γ γ'
            . Weakening γ' γ

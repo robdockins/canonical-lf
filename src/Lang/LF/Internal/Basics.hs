@@ -2,12 +2,14 @@ module Lang.LF.Internal.Basics where
 
 import           Data.Set (Set)
 import qualified Data.Set as Set
+import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 
 import Lang.LF.Internal.Model
 import Lang.LF.Internal.Weak
 
-alphaEqLF :: LFModel f m
+alphaEqLF :: forall f m γ₁ γ₂ γ s
+           . LFModel f m
           => Weakening γ₁ γ
           -> Weakening γ₂ γ
           -> f γ₁ s
@@ -21,14 +23,32 @@ alphaEqLF w₁ w₂ x y =
     (KPi _ a k   , KPi _ a' k')    -> (&&) (alphaEqLF w₁ w₂ a a') (alphaEqLF (weakSkip w₁) (weakSkip w₂) k k')
     (AType x     , AType x')       -> alphaEqLF w₁ w₂ x x'
     (TyPi _ a1 a2, TyPi _ a1' a2') -> (&&) (alphaEqLF w₁ w₂ a1 a1') (alphaEqLF (weakSkip w₁) (weakSkip w₂) a2 a2')
+    (TyRecord r1 , TyRecord r2)    -> alphaEqLF w₁ w₂ r1 r2
+    (TyRow fs1   , TyRow fs2)      -> fs1 == fs2
     (TyConst x   , TyConst x')     -> x == x'
     (TyApp a m   , TyApp a' m')    -> (&&) (alphaEqLF w₁ w₂ a a') (alphaEqLF w₁ w₂ m m')
     (ATerm x     , ATerm x')       -> alphaEqLF w₁ w₂ x x'
     (Lam _ a m   , Lam _ a' m')    -> (&&) (alphaEqLF w₁ w₂ a a') (alphaEqLF (weakSkip w₁) (weakSkip w₂) m m')
+    (Row fs1     , Row fs2)        -> minimum $ mergeFlds fs1 fs2
+    ( RowModify r1 del1 ins1
+     , RowModify r2 del2 ins2)     -> and [ alphaEqLF w₁ w₂ r1 r2
+                                          , del1 == del2
+                                          , minimum $ mergeFlds ins1 ins2
+                                          ]
+    (Record fs1  , Record fs2)     -> minimum $ mergeFlds fs1 fs2
+    (RecordModify r1 del1 ins1
+     , RecordModify r2 del2 ins2)  -> and [ alphaEqLF w₁ w₂ r1 r2
+                                          , del1 == del2
+                                          , minimum $ mergeFlds ins1 ins2
+                                          ]
     (Var         , Var)            -> weakenVar w₁ B == weakenVar w₂ B
     (UVar u      , UVar u')        -> u == u'
     (Const x     , Const x')       -> x == x'
     (App r m     , App r' m')      -> (&&) (alphaEqLF w₁ w₂ r r') (alphaEqLF w₁ w₂ m m')
+    ( Project r1 f1
+     , Project r2 f2)              -> (&&) (alphaEqLF w₁ w₂ r1 r2) (f1 == f2)
+
+    (Fail        , Fail)           -> True
     (Unify r1 r2 , Unify r1' r2')  -> (&&) (alphaEqLF w₁ w₂ r1 r1') (alphaEqLF w₁ w₂ r2 r2')
     (And cs      , And cs')        -> and (zipWith (alphaEqLF w₁ w₂) cs cs')
     (Forall _ a c, Forall _ a' c') -> (&&) (alphaEqLF w₁ w₂ a a') (alphaEqLF (weakSkip w₁) (weakSkip w₂) c c')
@@ -37,6 +57,14 @@ alphaEqLF w₁ w₂ x y =
     (Goal m c    , Goal m' c')     -> (&&) (alphaEqLF w₁ w₂ m m') (alphaEqLF w₁ w₂ c c')
     _ -> False
 
+ where mergeFlds :: forall s
+                  . Map (LFRecordIndex f) (f γ₁ s)
+                 -> Map (LFRecordIndex f) (f γ₂ s)
+                 -> Map (LFRecordIndex f) Bool
+       mergeFlds = Map.mergeWithKey
+                     (\_k t1 t2 -> Just $ alphaEqLF w₁ w₂ t1 t2)
+                     (fmap $ const False)
+                     (fmap $ const False)
 
 data VarSet :: Ctx * -> * where
   VarSetEmpty :: VarSet γ
@@ -97,9 +125,13 @@ foldFree merge z = go
       TyPi _ a1 a2 -> go f a1 `merge` go f' a2
       TyConst _ -> z
       TyApp p a -> go f p `merge` go f a
-      TyRecord flds -> foldr merge z $ map (go f) $ Map.elems flds
+      TyRecord row -> go f row
+      TyRow _fldSet -> z
       Lam _ a m -> go f a `merge` go f' m
+      Row flds -> foldr merge z $ map (go f) $ Map.elems flds
+      RowModify r _delSet insMap -> foldr merge (go f r) $ map (go f) $ Map.elems insMap
       Record flds -> foldr merge z $ map (go f) $ Map.elems flds
+      RecordModify r _delSet insMap -> foldr merge (go f r) $ map (go f) $ Map.elems insMap
       Const _ -> z
       ATerm x -> go f x
       App r m -> go f r `merge` go f m
@@ -126,9 +158,15 @@ freeUVarsLF tm =
     TyPi _ a1 a2 -> Set.union (freeUVars a1) (freeUVars a2)
     TyConst _ -> Set.empty
     TyApp p a -> Set.union (freeUVars p) (freeUVars a)
-    TyRecord flds -> Set.unions $ map freeUVars $ Map.elems flds
+    TyRow _fldSet -> Set.empty
+    TyRecord row -> freeUVars row
     Lam _ a m -> Set.union (freeUVars a) (freeUVars m)
+    Row flds -> Set.unions $ map freeUVars $ Map.elems flds
+    RowModify r _delSet insMap ->
+        Set.union (freeUVars r) $ Set.unions $ map freeUVars $ Map.elems insMap
     Record flds -> Set.unions $ map freeUVars $ Map.elems flds
+    RecordModify r _delSet insMap ->
+        Set.union (freeUVars r) $ Set.unions $ map freeUVars $ Map.elems insMap
     Const _ -> Set.empty
     ATerm x -> freeUVars x
     App r m -> Set.union (freeUVars r) (freeUVars m)

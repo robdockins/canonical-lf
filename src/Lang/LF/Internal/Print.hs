@@ -1,7 +1,9 @@
+{-# LANGUAGE MultiWayIf #-}
 module Lang.LF.Internal.Print where
 
 import           Control.Arrow ( (***) )
 import           Data.Set (Set)
+import qualified Data.Set as Set
 import qualified Data.Map.Strict as Map
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
@@ -13,20 +15,20 @@ displayLF :: (LFModel f m, ?nms :: Set String, ?hyps::Hyps f γ, ?soln :: LFSoln
           => f γ s -> m String
 displayLF x = show <$> ppLF TopPrec WeakRefl x
 
-prettyRecord :: Monad m => [(Doc, m Doc)] -> m Doc
-prettyRecord flds = do
+prettyRecord :: Monad m => Doc -> Doc -> Doc -> [(Doc, m Doc)] -> m Doc
+prettyRecord begin end sep flds = do
    flds' <- go flds
-   return $ group $ align $ text "{" <+> flds' <> text "}"
+   return $ align $ group (begin <+> flds' <> line <> end)
  where go [] = return softline
        go [x] = go1 x
        go (x:xs) = do
              x' <- go1 x
              xs' <- go xs
-             return (x' <> softline <> text "," <+> xs')
+             return (x' <> linebreak <> text "," <+> xs')
 
        go1 (nm,x) = do
              x' <- x
-             return $ nm <+> text ":"  <+> x'
+             return $ hang 2 (group (text "$" <> nm <+> sep <> softline <> x'))
 
 prettyLF
       :: (LFModel f m, ?nms::Set String, ?hyps::Hyps f γ', ?soln :: LFSoln f)
@@ -65,9 +67,16 @@ prettyLF prec w x =
          a2doc <- ppLF TopPrec (WeakSkip w) a2
          return $! group $ (if prec /= TopPrec then parens else id) $
            (align (a1doc <+> text "⇒" <> softline <> a2doc))
-    TyRecord flds -> do
-      prettyRecord $ map (pretty *** ppLF TopPrec w) $ Map.toList flds
+    TyRow (PosFieldSet fldSet) -> return $
+        text "row⊆" <>
+        encloseSep lbrace rbrace comma (map pretty $ Set.toList fldSet)
+    TyRow (NegFieldSet fldSet)
+      | Set.null fldSet -> return $ text "row"
+      | otherwise -> return $
+         text "row#" <>
+         encloseSep lbrace rbrace comma (map pretty $ Set.toList fldSet)
 
+    TyRecord row -> ppLF RecordPrec w row
     TyConst x -> return $ pretty x
     TyApp p a -> do
          pdoc <- ppLF AppLPrec w p
@@ -85,7 +94,47 @@ prettyLF prec w x =
          return $! (if prec /= TopPrec then parens else id) $
            text "λ" <> text nm' <+> colon <+> adoc <> comma <> nest 2 (softline <> mdoc)
     Record flds -> do
-      prettyRecord $ map (pretty *** ppLF TopPrec w) $ Map.toList flds
+      prettyRecord lbrace rbrace (text ":=") $ map (pretty *** ppLF TopPrec w) $ Map.toList flds
+    RecordModify r delSet insMap -> do
+      headDoc <- if Set.null delSet then do
+                    ppLF TopPrec w r
+                 else do
+                    rdoc <- ppLF AppLPrec w r
+                    let delSet' = encloseSep lbrace rbrace comma $
+                                    map pretty $ Set.elems delSet
+                    return $ rdoc <> text "\\" <> delSet'
+      let insList = map (pretty *** ppLF TopPrec w) $ Map.toList insMap
+      if null insList then
+         return $ lbrace <+> headDoc <+> rbrace
+      else do
+         tailDoc <- prettyRecord (text "|") rbrace (text "↦") insList
+         return $ group $ align $ lbrace <+> headDoc <> softline <> tailDoc
+
+    Row flds -> do
+      let (begin,end) = if prec == RecordPrec then
+                          (lbrace,rbrace)
+                        else
+                          (text "《", text "》")
+      prettyRecord begin end colon $ map (pretty *** ppLF TopPrec w) $ Map.toList flds
+    RowModify r delSet insMap -> do
+      let (begin,end) = if prec == RecordPrec then
+                          (lbrace,rbrace)
+                        else
+                          (text "《", text "》")
+      headDoc <- if Set.null delSet then do
+                    ppLF TopPrec w r
+                 else do
+                    rdoc <- ppLF AppLPrec w r
+                    let delSet' = encloseSep lbrace rbrace comma $
+                                    map pretty $ Set.elems delSet
+                    return $ rdoc <> text "\\" <> delSet'
+      let insList = map (pretty *** ppLF TopPrec w) $ Map.toList insMap
+      if null insList then
+         return $ begin <+> headDoc <+> end
+      else do
+         tailDoc <- prettyRecord (text "|") end (text "↦") insList
+         return $ group $ align $ begin <+> headDoc <> softline <> tailDoc
+
     Const x -> return $ pretty x
     App m1 m2 -> do
          m1doc <- ppLF AppLPrec w m1
