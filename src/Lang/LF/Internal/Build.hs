@@ -9,6 +9,7 @@ import           Data.Proxy
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
 
+import Lang.LF.Internal.Basics
 import Lang.LF.Internal.Model
 import Lang.LF.Internal.Hyps
 import Lang.LF.Internal.Solve
@@ -49,15 +50,77 @@ tyPi nm a1 a2 = foldLF =<< (TyPi nm <$> a1 <*> a2)
 infixr 5 ==>
 infixl 2 @@
 
-var0 :: (LFModel f m) => Var γ -> Weakening γ γ' -> m (f γ' ATERM)
-var0 (F x) w = var0 x (WeakRight w)
-var0 B w = weaken w <$> foldLF Var
+mkVar :: LFModel f m => Var γ -> m (f γ TERM)
+mkVar v = aterm <$> var0 v WeakRefl
 
-var :: (CtxSub γ γ', LFModel f m) => Var γ -> m (f γ' TERM)
-var v = autoweaken <$> (foldLF . ATerm =<< var0 v WeakRefl)
+var :: forall f m γ γ'
+     . (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ', CtxSub γ γ')
+    => Var γ
+    -> m (f γ' TERM)
+var v = do
+  var' $ weakenVar (autoweakening (Proxy :: Proxy (CtxDiff γ γ'))) $ v
 
-uvar :: LFModel f m => LFUVar f -> m (f E TERM)
-uvar u = foldLF . ATerm =<< foldLF (UVar u)
+var' :: forall f m γ
+      . (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ)
+     => Var γ
+     -> m (f γ TERM)
+var' v = do
+  let (_,_,t) = lookupHyp ?hyps v WeakRefl
+  eta_expand WeakRefl t =<< var0 v WeakRefl
+
+uvar :: (LFModel f m, LiftClosed γ)
+     => LFUVar f -> m (f γ TERM)
+uvar u = do
+   t <- uvarType u
+   liftClosed <$> inEmptyCtx (eta_expand WeakRefl t =<< foldLF (UVar u))
+
+eta_expand
+   :: (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ')
+   => Weakening γ γ'
+   -> f γ TYPE
+   -> f γ' ATERM
+   -> m (f γ' TERM)
+eta_expand w ty r =
+  case unfoldLF ty of
+    Weak w' x ->
+      eta_expand (weakCompose w w') x r
+    AType _ -> return $ aterm $ r
+
+    TyPi nm t1 t2 ->
+      extendCtx nm QPi (weaken w t1) $ do
+        v  <- eta_expand (WeakLeft w) t1 =<< foldLF Var
+        r' <- foldLF (App (weak r) v)
+        z  <- eta_expand (WeakSkip w) t2 r'
+        foldLF (Lam nm (weaken w t1) z)
+
+    TyRecord row ->
+      eta_expand_record w row r
+
+    -- NB no eta-expansion necessary for rows
+    TyRow _ -> return $ aterm r
+
+
+eta_expand_record
+   :: (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ')
+   => Weakening γ γ'
+   -> f γ TERM -- row term
+   -> f γ' ATERM
+   -> m (f γ' TERM)
+eta_expand_record w row r =
+  case unfoldLF row of
+    Weak w' x -> eta_expand_record (weakCompose w w') x r
+    Row flds  -> do
+      flds' <- Map.traverseWithKey (\k _ -> atomicProject WeakRefl r k) flds
+      foldLF (Record flds')
+    RowModify _ del ins -> do
+      ins' <- Map.traverseWithKey (\k _ -> atomicProject WeakRefl r k) ins
+      let del' = Set.union del (Map.keysSet ins)
+      foldLF (RecordModify r del' ins')
+    ATerm _ -> return $ aterm $ r
+    Lam{} -> fail "eta_expand_term : expected row value"
+    Record{} -> fail "eta_expand_term : expected row value"
+    RecordModify{} -> fail "eta_expand_term : expected row value"
+
 
 λ :: (LFModel f m
    , ?nms :: Set String
@@ -100,33 +163,33 @@ instance LFPi TYPE where
     a   <- extendCtx nm QPi tp' $ f B
     foldLF (TyPi nm tp' a)
 
-class LFFunc (sarg::SORT) (s::SORT) where
-  (==>) :: (LFModel f m) => m (f γ sarg) -> m (f γ s) -> m (f γ s)
+class LFFunc (s::SORT) where
+  (==>) :: (LFModel f m) => m (f γ TYPE) -> m (f γ s) -> m (f γ s)
 
-instance LFFunc TYPE KIND where
+instance LFFunc KIND where
   (==>) = kArrow
-instance LFFunc TYPE TYPE where
+instance LFFunc TYPE where
   (==>) = tyArrow
 
-class LFApplication (s::SORT) (sarg::SORT) where
-  (@@) :: (LFModel f m) => m (f γ s) -> m (f γ sarg) -> m (f γ s)
+class LFApplication (s::SORT) where
+  (@@) :: (LFModel f m) => m (f γ s) -> m (f γ TERM) -> m (f γ s)
 
-instance LFApplication TYPE TERM where
+instance LFApplication TYPE where
   (@@) = tyApp
-instance LFApplication TERM TERM where
+instance LFApplication TERM where
   (@@) = app
 
 tyArrow :: (LFModel f m) => m (f γ TYPE) -> m (f γ TYPE) -> m (f γ TYPE)
 tyArrow a1 a2 = do
    a1' <- a1
    a2' <- weak <$> a2
-   foldLF (TyPi "_" a1' a2')
+   foldLF (TyPi "x" a1' a2')
 
 kArrow :: (LFModel f m) => m (f γ TYPE) -> m (f γ KIND) -> m (f γ KIND)
 kArrow a k = do
    a' <- a
    k' <- weak <$> k
-   foldLF (KPi "_" a' k')
+   foldLF (KPi "x" a' k')
 
 tyConst :: (LiftClosed γ, LFModel f m) => LFTypeConst f -> m (f γ TYPE)
 tyConst x = liftClosed <$> (foldLF . AType =<< foldLF (TyConst x))
@@ -161,8 +224,9 @@ mkSigma nm a g = do
   foldLF (Sigma nm a g)
 
 tmConst :: (LiftClosed γ, LFModel f m) => LFConst f -> m (f γ TERM)
-tmConst x = liftClosed <$> (foldLF . ATerm =<< foldLF (Const x))
-
+tmConst x = do
+  t <- constType x
+  liftClosed <$> inEmptyCtx (eta_expand WeakRefl t =<< foldLF (Const x))
 
 mkRecord :: LFModel f m
          => Map (LFRecordIndex f) (f γ TERM)
@@ -265,8 +329,21 @@ updateRow row fld ty = do
   rowModify row' WeakRefl (Set.singleton fld) (Map.singleton fld ty')
 
 
+atomicProject
+    :: forall m f γ γ'
+     . (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ)
+    => Weakening γ' γ
+    -> f γ' ATERM
+    -> LFRecordIndex f
+    -> m (f γ TERM)
+atomicProject w r fld = do
+  prj <- foldLF (Project r fld)
+  t <- withCurrentSolution $ inferAType w prj
+  eta_expand WeakRefl t (weaken w prj)
+
+
 project :: forall m f γ
-         . LFModel f m
+         . (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ)
         => m (f γ TERM)
         -> LFRecordIndex f
         -> m (f γ TERM)
@@ -279,7 +356,7 @@ project x0 fld = join (go WeakRefl <$> x0)
    go w x =
      case unfoldLF x of
        Weak w' x' -> go (weakCompose w w') x'
-       ATerm r    -> weaken w . aterm <$> foldLF (Project r fld)
+       ATerm r -> atomicProject w r fld
        Lam _ _ _  ->
          fail "Cannot project from lambda terms"
        Row{} ->
@@ -297,86 +374,6 @@ project x0 fld = join (go WeakRefl <$> x0)
            Just m -> return (weaken w m)
            Nothing ->
              fail $ "possibly missing record field: " ++ show (pretty fld)
-
-
-recordModify :: LFModel f m
-          => f γ TERM
-          -> Weakening γ γ'
-          -> Set (LFRecordIndex f)
-          -> Map (LFRecordIndex f) (f γ' TERM)
-          -> m (f γ' TERM)
-recordModify m w del ins =
-  case unfoldLF m of
-    Weak w' m' -> recordModify m' (weakCompose w w') del ins
-    Record flds -> do
-        let flds'   = Map.filterWithKey (\k _ -> not (Set.member k del)) (fmap (weaken w) flds)
-        let flds'' = Map.union flds' ins
-        foldLF (Record flds'')
-    RecordModify r del0 ins0 -> do
-        let ins0'  = Map.filterWithKey (\k _ -> not (Set.member k del)) (fmap (weaken w) ins0)
-        let ins0'' = Map.union ins0' ins
-        let del0'  = Set.union del0 (Set.difference del (Map.keysSet ins0))
-        foldLF (RecordModify (weaken w r) del0' ins0'')
-    ATerm r -> foldLF (RecordModify (weaken w r) del ins)
-
-    Lam _ _ _ -> fail "Expected record value"
-    Row{} -> fail "Expected record value"
-    RowModify{} -> fail "Expected record value"
-  
-
-rowModify :: LFModel f m
-          => f γ TERM
-          -> Weakening γ γ'
-          -> Set (LFRecordIndex f)
-          -> Map (LFRecordIndex f) (f γ' TYPE)
-          -> m (f γ' TERM)
-rowModify m w del ins =
-  case unfoldLF m of
-    Weak w' m' -> rowModify m' (weakCompose w w') del ins
-    Row row -> do
-        let row'  = Map.filterWithKey (\k _ -> not (Set.member k del)) (fmap (weaken w) row)
-        let row'' = Map.union row' ins
-        foldLF (Row row'')
-    RowModify r del0 ins0 -> do
-        let ins0'  = Map.filterWithKey (\k _ -> not (Set.member k del)) (fmap (weaken w) ins0)
-        let ins0'' = Map.union ins0' ins
-        let del0' = Set.union del0 (Set.difference del (Map.keysSet ins0))
-        foldLF (RowModify (weaken w r) del0' ins0'')
-    ATerm r -> foldLF (RowModify (weaken w r) del ins)
-    Lam _ _ _ -> fail "Expected row value"
-    Record _ -> fail "Expected row value"
-    RecordModify{} -> fail "Expected row value"
-
-
-
-app :: forall m f γ. (LFModel f m)
-    => m (f γ TERM)
-    -> m (f γ TERM)
-    -> m (f γ TERM)
-app x y = join (go WeakRefl WeakRefl <$> x <*> y)
- where
-  go :: forall γ₁ γ₂
-      . Weakening γ₁ γ -> Weakening γ₂ γ -> f γ₁ TERM -> f γ₂ TERM -> m (f γ TERM)
-  go w1 w2 x' y' =
-   case (unfoldLF x', unfoldLF y') of
-     (Weak w1' x'', _) -> go (weakCompose w1 w1') w2 x'' y'
-     (_, Weak w2' y'') -> go w1 (weakCompose w2 w2') x' y''
-     (ATerm r, _) ->
-        mergeWeak (weakNormalize w1) (weakNormalize w2) $ \wcommon w1' w2' ->
-          weaken wcommon . aterm <$> foldLF (App (weaken w1' r) (weaken w2' y'))
-     (Record _, _) ->
-        fail "cannot apply values to records"
-     (RecordModify{}, _) ->
-        fail "cannot apply values to records"
-     (Row{}, _) ->
-        fail "cannot apply values to rows"
-     (RowModify{}, _) ->
-        fail "cannot apply values to rows"
-     (Lam _ _ m, _) ->
-        mergeWeak (weakNormalize w1) (weakNormalize w2) $ \wcommon w1' w2' ->
-          weaken wcommon <$>
-            let sub = (SubstApply (SubstWeak w1' SubstRefl) (weaken w2' y')) in
-            withCurrentSolution (hsubst sub m)
 
 cExists :: LFModel f m
         => String

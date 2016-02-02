@@ -79,8 +79,10 @@ module Lang.LF
 , tyArrow
 , λ
 , var
+, var'
 , uvar
 , tmConst
+, mkVar
 , mkLam
 , mkSigma
 , mkRecord

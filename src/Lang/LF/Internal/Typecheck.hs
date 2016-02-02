@@ -5,7 +5,7 @@ import qualified Data.Set as Set
 import qualified Data.Map.Strict as Map
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
-import Lang.LF.Internal.Build
+import Lang.LF.Internal.Basics
 import Lang.LF.Internal.Model
 import Lang.LF.Internal.Hyps
 import Lang.LF.Internal.Print
@@ -105,7 +105,7 @@ checkSubtype
 checkSubtype w₁ sub w₂ super =
   case (unfoldLF sub, unfoldLF super) of
     (Weak w' x, _) -> checkSubtype (weakCompose w₁ w') x w₂ super
-    (_, Weak w' y) -> checkSubtype w₁ sub (weakCompose w₂ w') y 
+    (_, Weak w' y) -> checkSubtype w₁ sub (weakCompose w₂ w') y
     (TyPi _ a1 b1, TyPi _ a2 b2) ->
         (&&) <$> checkSubtype w₂ a2 w₁ a1 -- NB: contravariant in arguments!
              <*> checkSubtype (WeakSkip w₁) b1 (WeakSkip w₂) b2
@@ -129,7 +129,7 @@ checkRowSubtype
 checkRowSubtype w₁ sub w₂ super =
   case (unfoldLF sub, unfoldLF super) of
     (Weak w' x, _) -> checkRowSubtype (weakCompose w₁ w') x w₂ super
-    (_, Weak w' y) -> checkRowSubtype w₁ sub (weakCompose w₂ w') y 
+    (_, Weak w' y) -> checkRowSubtype w₁ sub (weakCompose w₂ w') y
     (Row flds1, Row flds2) -> minimum <$> (sequence $ mergeFlds flds1 flds2)
     (RowModify r1 del1 ins1, RowModify r2 del2 ins2) -> do
        let br = alphaEq (weaken w₁ r1) (weaken w₂ r2)
@@ -180,7 +180,7 @@ inferTypeLF w m =
     Row flds -> do
       let flds' = Map.keysSet flds
       foldLF (TyRow (PosFieldSet flds'))
-    RowModify r delSet insMap -> do  
+    RowModify r delSet insMap -> do
       rset <- checkRowTy WeakRefl =<< inferAType w r
       let rset'    = fieldSetDifference rset (PosFieldSet delSet)
       let insSet   = PosFieldSet (Map.keysSet insMap)
@@ -237,11 +237,11 @@ inferTypeLF w m =
        TyRecord _ -> return ()
        TyRow _ -> return ()
        TyPi _ _ _ -> do
-           mdoc <- displayLF (weaken w m)
-           adoc <- displayLF (weaken subw a)
+           mdoc <- ppLF TopPrec w m
+           adoc <- ppLF TopPrec subw a
            fail $ unlines ["Term fails to be η-long:"
-                          , mdoc ++ " ::"
-                          , adoc
+                          , show $ indent 2 $ group $ hang 2 $
+                               mdoc <+> text "::" <> line <> adoc
                           ]
 
 inferATypeLF :: forall m f γ γ'
@@ -293,7 +293,7 @@ inferATypeLF w r =
           Nothing -> do
             rowdoc <- ppLF RecordPrec wsub row
             fail $ unwords ["Could not prove field exists", show (pretty fld), show rowdoc]
-      Row flds -> 
+      Row flds ->
         case Map.lookup fld flds of
           Just ty -> return (weaken wsub ty)
           Nothing -> do

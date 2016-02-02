@@ -6,7 +6,7 @@ import           Data.Proxy
 import qualified Data.Map.Strict as Map
 
 import Lang.LF.ChangeT
-import Lang.LF.Internal.Build
+import Lang.LF.Internal.Basics
 import Lang.LF.Internal.Model
 import Lang.LF.Internal.Solve
 import Lang.LF.Internal.Weak

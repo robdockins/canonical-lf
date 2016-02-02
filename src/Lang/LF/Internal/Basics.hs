@@ -1,5 +1,6 @@
 module Lang.LF.Internal.Basics where
 
+import           Control.Monad
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Map.Strict (Map)
@@ -7,6 +8,89 @@ import qualified Data.Map.Strict as Map
 
 import Lang.LF.Internal.Model
 import Lang.LF.Internal.Weak
+
+var0 :: (LFModel f m) => Var γ -> Weakening γ γ' -> m (f γ' ATERM)
+var0 (F x) w = var0 x (WeakRight w)
+var0 B w = weaken w <$> foldLF Var
+
+
+app :: forall m f γ. (LFModel f m)
+    => m (f γ TERM)
+    -> m (f γ TERM)
+    -> m (f γ TERM)
+app x y = join (go WeakRefl WeakRefl <$> x <*> y)
+ where
+  go :: forall γ₁ γ₂
+      . Weakening γ₁ γ -> Weakening γ₂ γ -> f γ₁ TERM -> f γ₂ TERM -> m (f γ TERM)
+  go w1 w2 x' y' =
+   case (unfoldLF x', unfoldLF y') of
+     (Weak w1' x'', _) -> go (weakCompose w1 w1') w2 x'' y'
+     (_, Weak w2' y'') -> go w1 (weakCompose w2 w2') x' y''
+     (ATerm r, _) ->
+        mergeWeak (weakNormalize w1) (weakNormalize w2) $ \wcommon w1' w2' ->
+          weaken wcommon . aterm <$> foldLF (App (weaken w1' r) (weaken w2' y'))
+     (Record _, _) ->
+        fail "cannot apply values to records"
+     (RecordModify{}, _) ->
+        fail "cannot apply values to records"
+     (Row{}, _) ->
+        fail "cannot apply values to rows"
+     (RowModify{}, _) ->
+        fail "cannot apply values to rows"
+     (Lam _ _ m, _) ->
+        mergeWeak (weakNormalize w1) (weakNormalize w2) $ \wcommon w1' w2' ->
+          weaken wcommon <$>
+            let sub = (SubstApply (SubstWeak w1' SubstRefl) (weaken w2' y')) in
+            withCurrentSolution (hsubst sub m)
+
+recordModify :: LFModel f m
+          => f γ TERM
+          -> Weakening γ γ'
+          -> Set (LFRecordIndex f)
+          -> Map (LFRecordIndex f) (f γ' TERM)
+          -> m (f γ' TERM)
+recordModify m w del ins =
+  case unfoldLF m of
+    Weak w' m' -> recordModify m' (weakCompose w w') del ins
+    Record flds -> do
+        let flds'  = Map.filterWithKey (\k _ -> not (Set.member k del)) (fmap (weaken w) flds)
+        let flds'' = Map.union flds' ins
+        foldLF (Record flds'')
+    RecordModify r del0 ins0 -> do
+        let ins0'  = Map.filterWithKey (\k _ -> not (Set.member k del)) (fmap (weaken w) ins0)
+        let ins0'' = Map.union ins0' ins
+        let del0'  = Set.union del0 (Set.difference del (Map.keysSet ins0))
+        foldLF (RecordModify (weaken w r) del0' ins0'')
+    ATerm r -> foldLF (RecordModify (weaken w r) del ins)
+
+    Lam _ _ _ -> fail "Expected record value"
+    Row{} -> fail "Expected record value"
+    RowModify{} -> fail "Expected record value"
+
+
+rowModify :: LFModel f m
+          => f γ TERM
+          -> Weakening γ γ'
+          -> Set (LFRecordIndex f)
+          -> Map (LFRecordIndex f) (f γ' TYPE)
+          -> m (f γ' TERM)
+rowModify m w del ins =
+  case unfoldLF m of
+    Weak w' m' -> rowModify m' (weakCompose w w') del ins
+    Row row -> do
+        let row'  = Map.filterWithKey (\k _ -> not (Set.member k del)) (fmap (weaken w) row)
+        let row'' = Map.union row' ins
+        foldLF (Row row'')
+    RowModify r del0 ins0 -> do
+        let ins0'  = Map.filterWithKey (\k _ -> not (Set.member k del)) (fmap (weaken w) ins0)
+        let ins0'' = Map.union ins0' ins
+        let del0'  = Set.union del0 (Set.difference del (Map.keysSet ins0))
+        foldLF (RowModify (weaken w r) del0' ins0'')
+    ATerm r -> foldLF (RowModify (weaken w r) del ins)
+    Lam _ _ _ -> fail "Expected row value"
+    Record _ -> fail "Expected row value"
+    RecordModify{} -> fail "Expected row value"
+
 
 alphaEqLF :: forall f m γ₁ γ₂ γ s
            . LFModel f m
@@ -180,3 +264,5 @@ freeUVarsLF tm =
     Goal m c -> Set.union (freeUVars m) (freeUVars c)
     Fail -> Set.empty
     UVar v -> Set.singleton v
+
+

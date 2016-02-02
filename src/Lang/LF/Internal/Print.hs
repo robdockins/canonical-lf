@@ -49,8 +49,7 @@ prettyLF prec w x =
            text "Π" <> text nm' <+> colon <+> adoc <+> comma <> nest 2 (softline <> kdoc)
       | otherwise -> do
          adoc <- ppLF BinderPrec w a
-         let ?hyps = extendHyps ?hyps "_" QPi (error "unbound name!")
-         kdoc <- ppLF TopPrec (WeakSkip w) k
+         kdoc <- extendCtx nm QPi (weaken w a) $ ppLF TopPrec (WeakSkip w) k
          return $ group $ (if prec /= TopPrec then parens else id) $
            align (adoc <+> text "⇒" <> line <> kdoc)
     AType x -> group . (linebreak <>) . hang 2 <$> (ppLF prec w x)
@@ -63,8 +62,8 @@ prettyLF prec w x =
            text "Π" <> text nm' <+> colon <+> a1doc <> comma <> nest 2 (softline <> a2doc)
       | otherwise -> do
          a1doc <- ppLF BinderPrec w a1
-         let ?hyps = extendHyps ?hyps "_" QPi (error "unbound name!")
-         a2doc <- ppLF TopPrec (WeakSkip w) a2
+         a2doc <- extendCtx nm QPi (weaken w a1) $ ppLF TopPrec (WeakSkip w) a2
+
          return $! group $ (if prec /= TopPrec then parens else id) $
            (align (a1doc <+> text "⇒" <> softline <> a2doc))
     TyRow (PosFieldSet fldSet) -> return $
@@ -149,7 +148,7 @@ prettyLF prec w x =
 
     Project x fld -> do
          xdoc <- ppLF AppLPrec w x
-         return $ xdoc <> text "->" <> pretty fld
+         return $ xdoc <> text "->$" <> pretty fld
 
     Unify r1 r2 -> do
          r1doc <- ppLF TopPrec w r1
