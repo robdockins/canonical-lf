@@ -22,14 +22,14 @@ cps_ml (termView -> VConst "ml_app" [e1,e2]) k_top =
            @@ (λ "k" kv $ \k ->
    cps_ml (weak e1) =<< (λ "z1" v $ \z1 ->
      cps_ml (weak $ weak e2) =<< (λ "z2" v $ \z2 ->
-                      "app" @@ (weak <$> var z1)
-                            @@ (weak . weak <$> var k)
-                            @@ (var z2))))
+                      "app" @@ (var' (F z1))
+                            @@ (var' (F (F k)))
+                            @@ (var' z2))))
 
 cps_ml (termView -> VConst "ml_pair" [e1,e2]) k_top =
   cps_ml e1 =<< (λ "z1" v $ \z1 ->
     cps_ml (weak e2) =<< (λ "z2" v $ \z2 ->
-      "letval" @@ ("pair" @@ (weak <$> var z1) @@ (var z2))
+      "letval" @@ ("pair" @@ (var' (F z1)) @@ (var z2))
                @@ (return $ weak $ weak k_top)))
 
 cps_ml (termView -> VConst "ml_inl" [e]) k_top =
@@ -56,7 +56,7 @@ cps_ml (termView -> VConst "ml_lam" [e]) k_top =
   "letval" @@ ("lam" @@ (λ "k" kv $ \k ->
                           (λ "x" v $ \x -> do
                             x' <- (return $ weak $ weak $ e) @@ (var x)
-                            tailcps_ml x' =<< (weak <$> var k))))
+                            tailcps_ml x' =<< (var' (F k)))))
            @@ (return k_top)
 
 cps_ml (termView -> VConst "ml_letval" [e1,e2]) k_top =
@@ -72,13 +72,13 @@ cps_ml (termView -> VConst "ml_case" [e,el,er]) k_top =
       @@ (λ "j" kv $ \j ->
       "letcont" @@ (λ "x1" v $ \x1 -> do
                          el' <- (return $ weak $ weak $ weak el) @@ var x1
-                         tailcps_ml el' =<< (weak <$> var j))
+                         tailcps_ml el' =<< (var' (F j)))
         @@ (λ "k1" kv $ \k1 ->
           "letcont" @@ (λ "x2" v $ \x2 -> do
                            er' <- (return $ weak $ weak $ weak $ weak er) @@ var x2
-                           tailcps_ml er' =<< (weak . weak <$> var j))
+                           tailcps_ml er' =<< (var' (F (F j))))
             @@ (λ "k2" kv $ \k2 ->
-               "case" @@ (weak . weak . weak <$> var z) @@ (weak <$> var k1) @@ var k2))))
+               "case" @@ (var' (F $ F $ F z)) @@ (var' (F k1)) @@ var' k2))))
 
 cps_ml tm _ = do
   tm_doc <- ppLF TopPrec WeakRefl tm
@@ -98,18 +98,18 @@ tailcps_ml (termView -> VConst "ml_var" [x]) k_top =
 tailcps_ml (termView -> VConst "ml_app" [e1,e2]) k_top =
   cps_ml e1 =<< (λ "x1" v $ \x1 ->
     cps_ml (weak e2) =<< (λ "x2" v $ \x2 ->
-      "app" @@ (weak <$> var x1) @@ (return $ weak $ weak k_top) @@ (var x2)))
+      "app" @@ (var' (F x1)) @@ (return $ weak $ weak k_top) @@ (var x2)))
 
 tailcps_ml (termView -> VConst "ml_lam" [e]) k_top =
   "letval" @@ ("lam" @@ (λ "j" kv $ \j -> λ "x" v $ \x -> do
                            e' <- (return $ weak $ weak e) @@ (var x)
-                           tailcps_ml e' =<< (weak <$> var j)))
+                           tailcps_ml e' =<< (var' (F j))))
            @@ (λ "f" v $ \f -> "enter" @@ (return $ weak $ k_top) @@ (var f))
 
 tailcps_ml (termView -> VConst "ml_pair" [e1,e2]) k_top =
   cps_ml e1 =<< (λ "x1" v $ \x1 ->
     cps_ml (weak e2) =<< (λ "x2" v $ \x2 ->
-      "letval" @@ ("pair" @@ (weak <$> var x1) @@ (var x2))
+      "letval" @@ ("pair" @@ (var' (F x1)) @@ (var x2))
                @@ (λ "x" v $ \x ->
                      "enter" @@ (return $ weak $ weak $ weak $ k_top) @@ (var x))))
 
@@ -159,8 +159,8 @@ tailcps_ml (termView -> VConst "ml_case" [e,el,er]) k_top =
                         er' <- (return $ weak $ weak $ weak er) @@ (var x2)
                         tailcps_ml er' (weak $ weak $ weak k_top))
            @@ (λ "k2" kv $ \k2 ->
-                "case" @@ (weak . weak <$> var z)
-                       @@ (weak <$> var k1)
+                "case" @@ (var' (F (F z)))
+                       @@ (var' (F k1))
                        @@ (var k2))))
 
 tailcps_ml tm _ = do

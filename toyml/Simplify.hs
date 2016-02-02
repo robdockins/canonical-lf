@@ -137,7 +137,7 @@ simplifier bd (termView -> VConst "letcont" [k,m]) = do
                      (termView -> VConst "enter" [ j, termView -> VVar x' []]))
           | x == x' =
              case termView j of
-               VVar (F j') [] -> Just $ var j'
+               VVar (F j') [] -> Just $ mkVar j'
                VConst c []    -> Just $ tmConst c
                _ -> Nothing
        tryEtaCont _ = Nothing
