@@ -31,6 +31,8 @@ module Lang.LF
 , weakSubst
 , withCurrentSolution
 , commitSolution
+, extendSolution
+, emptySolution
 , lookupSubst
 , mapF
 , freeVar
@@ -66,6 +68,10 @@ module Lang.LF
 , ppLF
 , Prec(..)
 , displayLF
+
+  -- * Evaluation
+, LFAlgebra(..)
+, evaluate
 
   -- * Term Construction
 , weak

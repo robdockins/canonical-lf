@@ -1,10 +1,14 @@
 module Lang.LF.Internal.Basics where
 
 import           Control.Monad
+import           Data.Proxy
 import           Data.Set (Set)
 import qualified Data.Set as Set
+import           Data.Sequence (Seq)
+import qualified Data.Sequence as Seq
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
 import Lang.LF.Internal.Model
 import Lang.LF.Internal.Weak
@@ -266,3 +270,84 @@ freeUVarsLF tm =
     UVar v -> Set.singleton v
 
 
+weakenEnv :: Weakening γ γ' -> Seq a -> Maybe (Seq a)
+weakenEnv w env =
+  case w of
+    WeakSkip w ->
+      case Seq.viewl env of
+        x Seq.:< env' -> (x Seq.<|) <$> weakenEnv w env'
+        Seq.EmptyL    -> Nothing
+    WeakLeft w ->
+      case Seq.viewl env of
+        _ Seq.:< env' -> weakenEnv w env'
+        Seq.EmptyL    -> Nothing
+    WeakRight w ->
+      case Seq.viewr env of
+        env' Seq.:> _ -> weakenEnv w env'
+        Seq.EmptyR    -> Nothing
+    WeakRefl ->
+      Just env
+
+
+evaluateLF :: forall f γ m a
+            . (LFModel f m, ?soln :: LFSoln f)
+           => LFAlgebra f a
+           -> f γ TERM
+           -> Seq a
+           -> a
+evaluateLF alg = gom
+ where
+  gor :: forall γ. f γ ATERM -> Seq a -> [a] -> a
+  gor r env args =
+    case unfoldLF r of
+      Weak w x ->
+        case weakenEnv w env of
+          Just env' ->
+            gor x env' args
+          Nothing ->
+            eval_error alg $ "insufficent arguments"
+      Var ->
+        case Seq.viewl env of
+          x Seq.:< _ -> applyAll x args
+          Seq.EmptyL -> eval_error alg $ "insufficent arguments"
+      UVar u  ->
+        case lookupUVar Proxy u ?soln of
+          Just m ->
+            let m' = gom m env
+             in applyAll m' args
+          Nothing ->
+            eval_error alg $ unwords ["Unbound UVar found in evaluate:", show (pretty u)]
+      Const c ->
+        eval_const alg c args
+      App r m -> do
+        let m' = gom m env
+        gor r env (m':args)
+      Project r f -> do
+        let r' = gor r env []
+        let v  = eval_project alg r' f
+        applyAll v args
+
+  applyAll :: a -> [a] -> a
+  applyAll x []     = x
+  applyAll x (a:as) = applyAll (eval_app alg x a) as
+
+  gom :: forall γ. f γ TERM -> Seq a -> a
+  gom m env =
+    case unfoldLF m of
+      Weak w x   ->
+        case weakenEnv w env of
+          Just env' ->
+            gom x env'
+          Nothing ->
+            eval_error alg $ "insufficent arguments"
+      ATerm r    -> gor r env []
+      Lam _ _ m' -> eval_lam alg (\x -> gom m' (x Seq.<| env))
+      Record xs  -> eval_record alg $ fmap (\x -> gom x env) xs
+      RecordModify r del ins ->
+        let r' = gor r env []
+            ins' = fmap (\x -> gom x env) ins
+         in eval_record_modify alg r' del ins'
+      Row xs -> eval_row alg $ Map.keysSet xs
+      RowModify r del ins ->
+        let r' = gor r env []
+         in eval_row_modify alg r' del (Map.keysSet ins)

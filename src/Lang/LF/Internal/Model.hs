@@ -5,6 +5,7 @@ module Lang.LF.Internal.Model where
 
 import           Data.Proxy
 import           Data.Map.Strict (Map)
+import           Data.Sequence (Seq)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
@@ -310,6 +311,26 @@ data ConstraintView f m γ where
          -> f (γ::> ()) CON
          -> ConstraintView f m γ
 
+data LFAlgebra f a =
+  LFAlgebra
+  { eval_const  :: LFConst f -> [a] -> a
+  , eval_lam    :: (a -> a) -> a
+  , eval_app    :: a -> a -> a
+  , eval_record :: Map (LFRecordIndex f) a -> a
+  , eval_record_modify
+       :: a
+       -> Set (LFRecordIndex f)
+       -> Map (LFRecordIndex f) a
+       -> a
+  , eval_project :: a -> LFRecordIndex f -> a
+  , eval_row :: Set (LFRecordIndex f) -> a
+  , eval_row_modify :: a
+                    -> Set (LFRecordIndex f)
+                    -> Set (LFRecordIndex f)
+                    -> a
+  , eval_error :: String -> a
+  }
+
 
 -- | This datastructure represents the ways a canonical LF term can be viewed.
 --   A term is either a goal (consisting of a term and constraints) or is
@@ -401,11 +422,18 @@ class (Ord (LFTypeConst f), Ord (LFConst f), Ord (LFUVar f), Ord (LFRecordIndex 
            => f γ GOAL
            -> GoalView f m γ
 
+  evaluate :: (?soln :: LFSoln f)
+           => LFAlgebra f a
+           -> f γ TERM
+           -> Seq a
+           -> a
+
   withCurrentSolution :: ((?soln :: LFSoln f) => m x) -> m x
   commitSolution :: LFSoln f -> m ()
   lookupUVar :: Proxy f -> LFUVar f -> LFSoln f -> Maybe (f E TERM)
   assignUVar :: Proxy f -> LFUVar f -> f E TERM -> LFSoln f -> m (LFSoln f)
   freshUVar :: f E TYPE -> m (LFUVar f)
+  emptySolution :: Proxy f -> LFSoln f
   extendSolution :: LFUVar f -> f E TERM -> LFSoln f -> Maybe (LFSoln f)
 
   instantiate :: (?soln :: LFSoln f)

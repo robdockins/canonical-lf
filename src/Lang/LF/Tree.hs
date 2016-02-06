@@ -107,6 +107,8 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
 
   alphaEq = alphaEqLF WeakRefl WeakRefl
 
+  evaluate = evaluateLF
+
   constKind a = M $ do
      sig <- ask
      case Map.lookup a (sigFamilies sig) of
@@ -146,6 +148,7 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
          , uvarTypes = Map.insert n tp $ uvarTypes s
          }
     return n
+  emptySolution _ = Map.empty
   extendSolution u tm soln =
     case Map.lookup u soln of
       Nothing -> Just $ Map.insert u tm soln
