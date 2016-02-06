@@ -1,7 +1,6 @@
 {-# LANGUAGE MultiWayIf #-}
 module Lang.LF.Internal.Print where
 
-import           Control.Arrow ( (***) )
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as Map
@@ -31,18 +30,19 @@ prettyRecord begin end sep flds =
 
 prettyValue :: LFModel f m
         => (a -> Doc)
-        -> LFVal f a
+        -> LFVal f m a
         -> Doc
 prettyValue ppBase v =
   case v of
-    ValLam _ -> text "<<fun>>"
-    ValRecord xs ->
-      let xs' = map (pretty *** prettyValue ppBase) $ Map.toList xs in
+    ValLam _ ->
+      text "<<fun>>"
+    ValRecord xs -> do
+      let xs' = [ (pretty f, prettyValue ppBase x)
+                | (f,x) <- Map.toList xs
+                ]
       prettyRecord lbrace rbrace (text ":=") xs'
     ValRow xs ->
       encloseSep (text "⟨") (text "⟩") comma $ map pretty $ Set.toList xs
-    ValError msg ->
-      text "<<ERROR:" <+> text msg <> text ">>"
     ValBase x ->
       ppBase x
 
