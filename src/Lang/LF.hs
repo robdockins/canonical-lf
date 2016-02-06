@@ -70,8 +70,10 @@ module Lang.LF
 , displayLF
 
   -- * Evaluation
-, LFAlgebra(..)
+, LFAlgebra
+, LFVal(..)
 , evaluate
+, prettyValue
 
   -- * Term Construction
 , weak

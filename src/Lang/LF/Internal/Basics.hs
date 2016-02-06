@@ -288,16 +288,15 @@ weakenEnv w env =
     WeakRefl ->
       Just env
 
-
 evaluateLF :: forall f γ m a
             . (LFModel f m, ?soln :: LFSoln f)
            => LFAlgebra f a
            -> f γ TERM
-           -> Seq a
-           -> a
-evaluateLF alg = gom
+           -> Seq (LFVal f a)
+           -> LFVal f a
+evaluateLF eval_const = gom
  where
-  gor :: forall γ. f γ ATERM -> Seq a -> [a] -> a
+  gor :: forall γ. f γ ATERM -> Seq (LFVal f a) -> [LFVal f a] -> LFVal f a
   gor r env args =
     case unfoldLF r of
       Weak w x ->
@@ -305,33 +304,44 @@ evaluateLF alg = gom
           Just env' ->
             gor x env' args
           Nothing ->
-            eval_error alg $ "insufficent arguments"
+            ValError "insufficent arguments"
       Var ->
         case Seq.viewl env of
           x Seq.:< _ -> applyAll x args
-          Seq.EmptyL -> eval_error alg $ "insufficent arguments"
+          Seq.EmptyL -> ValError $ "insufficent arguments"
       UVar u  ->
         case lookupUVar Proxy u ?soln of
           Just m ->
             let m' = gom m env
              in applyAll m' args
           Nothing ->
-            eval_error alg $ unwords ["Unbound UVar found in evaluate:", show (pretty u)]
+            ValError $ unwords ["Unbound UVar found in evaluate:", show (pretty u)]
       Const c ->
-        eval_const alg c args
+        eval_const c args
       App r m -> do
         let m' = gom m env
         gor r env (m':args)
       Project r f -> do
         let r' = gor r env []
-        let v  = eval_project alg r' f
-        applyAll v args
+        applyAll (project r' f) args
 
-  applyAll :: a -> [a] -> a
+  apply :: LFVal f a -> LFVal f a -> LFVal f a
+  apply (ValLam f) x = f x
+  apply _ _ = ValError "Expected function"
+
+  project :: LFVal f a -> LFRecordIndex f -> LFVal f a
+  project (ValRecord xs) f =
+    case Map.lookup f xs of
+      Just x -> x
+      Nothing -> ValError $ unwords ["missing field", show (pretty f)]
+  project _ _=
+    ValError $ "expected record value"
+
+  applyAll :: LFVal f a -> [LFVal f a] -> LFVal f a
   applyAll x []     = x
-  applyAll x (a:as) = applyAll (eval_app alg x a) as
+  applyAll x (a:as) = applyAll (apply x a) as
 
-  gom :: forall γ. f γ TERM -> Seq a -> a
+  gom :: forall γ. f γ TERM -> Seq (LFVal f a) -> LFVal f a
   gom m env =
     case unfoldLF m of
       Weak w x   ->
@@ -339,15 +349,22 @@ evaluateLF alg = gom
           Just env' ->
             gom x env'
           Nothing ->
-            eval_error alg $ "insufficent arguments"
+            ValError $ "insufficent arguments"
       ATerm r    -> gor r env []
-      Lam _ _ m' -> eval_lam alg (\x -> gom m' (x Seq.<| env))
-      Record xs  -> eval_record alg $ fmap (\x -> gom x env) xs
+      Lam _ _ m' -> ValLam (\x -> gom m' (x Seq.<| env))
+      Record xs  -> ValRecord $ fmap (\x -> gom x env) xs
       RecordModify r del ins ->
-        let r' = gor r env []
-            ins' = fmap (\x -> gom x env) ins
-         in eval_record_modify alg r' del ins'
-      Row xs -> eval_row alg $ Map.keysSet xs
+        let r' = gor r env [] in
+        case r' of
+          ValRecord xs ->
+            let xs' = Map.filterWithKey (\k _ -> not (Set.member k del)) xs
+                xs'' = Map.union xs' (fmap (\x -> gom x env) ins)
+             in ValRecord xs''
+          _ -> ValError "Expected record value"
+      Row xs -> ValRow $ Map.keysSet xs
       RowModify r del ins ->
-        let r' = gor r env []
-         in eval_row_modify alg r' del (Map.keysSet ins)
+        let r' = gor r env [] in
+        case r' of
+         ValRow xs ->
+           ValRow $ Set.union (Set.difference xs del) (Map.keysSet ins)
+         _ -> ValError "Expected row value"

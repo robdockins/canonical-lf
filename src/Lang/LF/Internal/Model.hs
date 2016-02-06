@@ -311,26 +311,15 @@ data ConstraintView f m γ where
          -> f (γ::> ()) CON
          -> ConstraintView f m γ
 
-data LFAlgebra f a =
-  LFAlgebra
-  { eval_const  :: LFConst f -> [a] -> a
-  , eval_lam    :: (a -> a) -> a
-  , eval_app    :: a -> a -> a
-  , eval_record :: Map (LFRecordIndex f) a -> a
-  , eval_record_modify
-       :: a
-       -> Set (LFRecordIndex f)
-       -> Map (LFRecordIndex f) a
-       -> a
-  , eval_project :: a -> LFRecordIndex f -> a
-  , eval_row :: Set (LFRecordIndex f) -> a
-  , eval_row_modify :: a
-                    -> Set (LFRecordIndex f)
-                    -> Set (LFRecordIndex f)
-                    -> a
-  , eval_error :: String -> a
-  }
+data LFVal f a
+  = ValLam (LFVal f a -> LFVal f a)
+  | ValRecord (Map (LFRecordIndex f) (LFVal f a))
+  | ValRow (Set (LFRecordIndex f))
+  | ValError String
+  | ValBase a
 
+type LFAlgebra f a =
+  LFConst f -> [LFVal f a] -> LFVal f a
 
 -- | This datastructure represents the ways a canonical LF term can be viewed.
 --   A term is either a goal (consisting of a term and constraints) or is
@@ -425,8 +414,8 @@ class (Ord (LFTypeConst f), Ord (LFConst f), Ord (LFUVar f), Ord (LFRecordIndex 
   evaluate :: (?soln :: LFSoln f)
            => LFAlgebra f a
            -> f γ TERM
-           -> Seq a
-           -> a
+           -> Seq (LFVal f a)
+           -> LFVal f a
 
   withCurrentSolution :: ((?soln :: LFSoln f) => m x) -> m x
   commitSolution :: LFSoln f -> m ()
