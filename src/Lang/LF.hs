@@ -42,6 +42,8 @@ module Lang.LF
 , abstractUVars
 , SigDecl(..)
 , extendSignature
+, getSignature
+, prettySignature
 
   -- * Term views
 , KindView(..)

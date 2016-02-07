@@ -9,16 +9,17 @@ module Lang.LF.Tree
 )
 where
 
+import           Control.Monad.Identity
 import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Control.Monad.State
---import qualified Data.Foldable as Fold
+import           Data.Foldable
 import           Data.Map (Map)
 import qualified Data.Map as Map
 --import           Data.Set (Set)
 import qualified Data.Set as Set
---import           Data.Sequence (Seq, (|>))
---import qualified Data.Sequence as Seq
+import           Data.Sequence (Seq, (|>))
+import qualified Data.Sequence as Seq
 
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
@@ -139,6 +140,9 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
 
   solve = solveLF
 
+  getSignature = M $ do
+    toList . sigDecls <$> ask
+
   extendSignature [] m = m
   extendSignature ((a ::. ty) : xs) m = M $ ReaderT $ \sig -> do
     sig' <- lift $ addTypeConstant sig a ty
@@ -167,12 +171,13 @@ dumpContextLF = do
 -}
 
 emptySig :: Signature a c
-emptySig = Sig Map.empty Map.empty
+emptySig = Sig Map.empty Map.empty Seq.empty
 
 data Signature a c
   = Sig
     { sigFamilies :: Map a (LFTree a c E KIND)
     , sigTerms    :: Map c (LFTree a c E TYPE)
+    , sigDecls    :: Seq (SigDecl (LFTree a c) Identity)
     }
 
 addTypeConstant :: (Ord a, Ord c, Pretty a, Pretty c)
@@ -189,7 +194,9 @@ addTypeConstant sig nm m =
            let ?hyps = HNil
            let ?soln = Map.empty
            unM $ validateKind WeakRefl k
-           return sig{ sigFamilies = Map.insert nm k (sigFamilies sig) }
+           return sig{ sigFamilies = Map.insert nm k (sigFamilies sig)
+                     , sigDecls = sigDecls sig |> (nm ::. return k)
+                     }
 
 addTermConstant :: (Ord a, Ord c, Pretty a, Pretty c)
                 => Signature a c
@@ -205,7 +212,9 @@ addTermConstant sig nm m =
            let ?hyps = HNil
            let ?soln = Map.empty
            unM $ validateType WeakRefl x
-           return sig{ sigTerms = Map.insert nm x (sigTerms sig) }
+           return sig{ sigTerms = Map.insert nm x (sigTerms sig)
+                     , sigDecls = sigDecls sig |> (nm :. return x)
+                     }
 
 runM :: (Ord a, Ord c, Pretty a, Pretty c)
      => [SigDecl (LFTree a c) (M a c)]

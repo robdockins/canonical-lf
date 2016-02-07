@@ -3,6 +3,7 @@ module Lang.LF.Internal.Model where
 
 --import GHC.Exts ( Constraint )
 
+import           Control.Monad.Identity
 import           Data.Proxy
 import           Data.Map.Strict (Map)
 import           Data.Sequence (Seq)
@@ -422,6 +423,8 @@ class (Ord (LFTypeConst f), Ord (LFConst f), Ord (LFUVar f), Ord (LFRecordIndex 
            -> f γ TERM
            -> Seq (LFVal f m a)
            -> m (LFVal f m a)
+
+  getSignature :: m [SigDecl f Identity]
 
   extendSignature :: [SigDecl f m] -> m x -> m x
 
