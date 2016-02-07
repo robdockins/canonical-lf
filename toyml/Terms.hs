@@ -6,7 +6,6 @@ import           Data.String
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
 import           Lang.LF
-import           Lang.LF.Tree hiding (M)
 import qualified Lang.LF.Tree as Tree
 
 data TyConst
@@ -29,14 +28,13 @@ instance IsString TmConst where
 
 
 type LF = Tree.LFTree TyConst TmConst
-type Sig = Tree.Signature TyConst TmConst
 type M = Tree.M TyConst TmConst
 type H = Hyps LF
 
 -- Signature for the language λᵁCPS from Andrew Kennedy's
 -- "Compiling with Continuations, Continued" (ICFP 2007)
-sig :: Sig
-sig = buildSignature
+sig :: [SigDecl LF M]
+sig = inEmptyCtx
   [ "tm"       ::. lf_type
   , "val"      ::. lf_type
   , "ml"       ::. lf_type
