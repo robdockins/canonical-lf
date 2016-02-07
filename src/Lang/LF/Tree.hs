@@ -32,8 +32,6 @@ import Lang.LF.Internal.Subst
 import Lang.LF.Internal.Typecheck
 import Lang.LF.Internal.View
 
---import Lang.LF.ChangeT
-
 newtype LFTree a c γ (s::SORT) =
   LFTree { lfTree :: LF (LFTree a c) γ s
          }
@@ -58,7 +56,6 @@ emptyUVarState =
   , uvarTypes = Map.empty
   , uvarNext = 0
   }
-
 
 type instance LFTypeConst (LFTree a c) = a
 type instance LFConst (LFTree a c) = c
@@ -153,22 +150,6 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
 
   instantiate = instantiateLF
   abstractUVars = abstractLF
-
-{-
-dumpContextLF :: (Ord a, Ord c, Pretty a, Pretty c) => M a c Doc
-dumpContextLF = do
-   (_,ctx,_) <- ask
-   binds <- mapM dumpBind $ Fold.toList ctx
-   return $ vcat $ binds
- where dumpBind (nm,q,a) = do
-           adoc <- ppLF TopPrec a
-           return $ dumpq q <> text nm <+> text ":" <+> adoc
-       dumpq QPi  = text "Π"
-       dumpq QLam = text "λ"
-       dumpq QForall = text "∀"
-       dumpq QExists = text "∃"
-       dumpq QSigma = text "Σ"
--}
 
 emptySig :: Signature a c
 emptySig = Sig Map.empty Map.empty Seq.empty

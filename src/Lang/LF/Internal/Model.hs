@@ -1,8 +1,6 @@
 {-# LANGUAGE UndecidableInstances #-}
 module Lang.LF.Internal.Model where
 
---import GHC.Exts ( Constraint )
-
 import           Control.Monad.Identity
 import           Data.Proxy
 import           Data.Map.Strict (Map)
@@ -12,8 +10,6 @@ import qualified Data.Set as Set
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
 import           Lang.LF.ChangeT
-
---import qualified Debug.Trace as Debug
 
 -- | Datakind used to classify the syntactic categories of LF.
 data SORT

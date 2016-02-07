@@ -230,7 +230,8 @@ substWeak s (WeakRight w) k =
 --      [[ a ]] ∘ [[ w ]] == [[ w' ]] ∘ [[ a' ]]
 --
 --   The resulting abstraction will be mildly
---   mildly simpler than the one you started with.
+--   mildly simpler than the one you started with,
+--   but the weakening may be more complicated.
 --
 --   This function is written in a continuaion-passing
 --   style so that the new intermediate context can be
