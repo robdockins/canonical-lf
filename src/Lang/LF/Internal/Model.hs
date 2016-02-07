@@ -320,6 +320,13 @@ data LFVal f m a
 type LFAlgebra f m a =
   LFConst f -> [LFVal f m a] -> m (LFVal f m a)
 
+infixr 0 ::.
+infixr 0 :.
+
+data SigDecl f m
+  = LFTypeConst f ::. m (f E KIND)
+  | LFConst f     :.  m (f E TYPE)
+
 -- | This datastructure represents the ways a canonical LF term can be viewed.
 --   A term is either a goal (consisting of a term and constraints) or is
 --   a Σ binder. In the binder case,
@@ -415,6 +422,8 @@ class (Ord (LFTypeConst f), Ord (LFConst f), Ord (LFUVar f), Ord (LFRecordIndex 
            -> f γ TERM
            -> Seq (LFVal f m a)
            -> m (LFVal f m a)
+
+  extendSignature :: [SigDecl f m] -> m x -> m x
 
   withCurrentSolution :: ((?soln :: LFSoln f) => m x) -> m x
   commitSolution :: LFSoln f -> m ()

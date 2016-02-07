@@ -40,6 +40,8 @@ module Lang.LF
 , freeUVars
 , Abstraction(..)
 , abstractUVars
+, SigDecl(..)
+, extendSignature
 
   -- * Term views
 , KindView(..)

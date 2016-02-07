@@ -1,27 +1,10 @@
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE PatternGuards #-}
-{-# LANGUAGE ViewPatterns #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE FunctionalDependencies #-}
-
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Lang.LF.Tree
 ( LFTree
-, Signature(..)
-, SigDecl(..)
-, runM
-, buildSignature
-, emptySig
 , M
+, runM
 , mkTerm
 )
 where
@@ -56,7 +39,7 @@ newtype LFTree a c γ (s::SORT) =
 
 instance (Pretty a, Pretty c, Ord a, Ord c) => Show (LFTree a c E s) where
   show x =
-    runM emptySig (inEmptyCtx (let ?soln = Map.empty in displayLF x))
+    runM [] (inEmptyCtx (let ?soln = Map.empty in displayLF x))
 
 type Soln a c = Map Integer (LFTree a c E TERM)
 
@@ -156,6 +139,14 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
 
   solve = solveLF
 
+  extendSignature [] m = m
+  extendSignature ((a ::. ty) : xs) m = M $ ReaderT $ \sig -> do
+    sig' <- lift $ addTypeConstant sig a ty
+    runReaderT (unM (extendSignature xs m)) sig'
+  extendSignature ((c :. tm) : xs) m = M $ ReaderT $ \sig -> do
+    sig' <- lift $ addTermConstant sig c tm
+    runReaderT (unM (extendSignature xs m)) sig'
+
   instantiate = instantiateLF
   abstractUVars = abstractLF
 
@@ -174,13 +165,6 @@ dumpContextLF = do
        dumpq QExists = text "∃"
        dumpq QSigma = text "Σ"
 -}
-
-infixr 0 ::.
-infixr 0 :.
-
-data SigDecl a c
-  = a ::. M a c (LFTree a c E KIND)
-  | c :.  M a c (LFTree a c E TYPE)
 
 emptySig :: Signature a c
 emptySig = Sig Map.empty Map.empty
@@ -223,24 +207,21 @@ addTermConstant sig nm m =
            unM $ validateType WeakRefl x
            return sig{ sigTerms = Map.insert nm x (sigTerms sig) }
 
-buildSignature :: (Ord a, Ord c, Pretty a, Pretty c)
-               => ((?hyps :: Hyps (LFTree a c) E, ?nms :: Set.Set String)
-                    => [SigDecl a c])
-               -> Signature a c
-buildSignature decls =
-   either error id $ runExcept $ foldM f emptySig $ inEmptyCtx decls
- where f sig (a ::. x) = addTypeConstant sig a x
-       f sig (c :. x)  = addTermConstant sig c x
-
-runM :: Signature a c
+runM :: (Ord a, Ord c, Pretty a, Pretty c)
+     => [SigDecl (LFTree a c) (M a c)]
      -> ((?soln :: LFSoln (LFTree a c)) => M a c x)
      -> x
 runM sig m =
   let ?soln = Map.empty in
-  either error id $ runExcept $ flip evalStateT emptyUVarState $ flip runReaderT sig $ unM m
+  either error id
+    $ runExcept
+    $ flip evalStateT emptyUVarState
+    $ flip runReaderT emptySig
+    $ unM
+    $ extendSignature sig m
 
 mkTerm :: (Ord a, Ord c, Pretty a, Pretty c)
-       => Signature a c
+       => [SigDecl (LFTree a c) (M a c)]
        -> (( ?soln :: LFSoln (LFTree a c)
            , ?hyps :: Hyps (LFTree a c) E
            , ?nms  :: Set.Set String
