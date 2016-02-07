@@ -6,12 +6,9 @@ import Prelude hiding (pi, abs)
 
 import Control.Monad.Trans.Class
 import Control.Monad.State
---import           Data.Sequence (Seq, (|>))
---import qualified Data.Sequence as Seq
+import           Data.Proxy
+import qualified Data.Sequence as Seq
 import           Data.Set (Set)
---import qualified Data.Set as Set
---import           Data.Map (Map)
---import qualified Data.Map as Map
 import           System.IO
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
@@ -23,12 +20,11 @@ import qualified Lang.LF.Tree as Tree
 --import qualified Debug.Trace as Debug
 
 type LF = Tree.LFTree String String
-type Sig = Tree.Signature String String
 type M = Tree.M String String
 type H = Hyps LF
 
-sig :: Sig
-sig = buildSignature
+sig :: [SigDecl LF M]
+sig = inEmptyCtx $
   [ -- STLC type formers
     "tp"      ::. lf_type
   , "arrow"    :. tp ==> tp ==> tp
@@ -69,7 +65,8 @@ sig = buildSignature
            (pi "x" tm $ \x ->
               typeof (var x) (var t2) ==> typeof (var f @@ var x) (var t))
            ==>
-           typeof (lam "x" (\x -> var f @@ var x)) (arrow (var t2) (var t))
+           typeof (lam "x" (\x -> var f @@ var x))
+                  (arrow (var t2) (var t))
   , "of_nat_elim" :.
          pi "t" tp $ \t ->
          pi "z" tm $ \z ->
@@ -140,6 +137,18 @@ sig = buildSignature
   , "B" :. tp
   , "C" :. tp
   , "X" :. tp
+
+
+  , "test_row" :. rowTy ["asdf","qwerty","xyz"]
+  , "test_record" :. recordTy $
+     extendRow
+       (extendRow (tmConst "test_row")
+                      "asdf"
+                      (recordTy
+                         (row [("abc",tm ==> tm)
+                           ,("xyz",(tp ==> tm) ==> tm)
+                           ])))
+          "qwerty" tp
   ]
 
 
@@ -254,21 +263,21 @@ cps (LamP body) =
   λ "klam" (tm ==> tm) $ \k -> (var k) @@
      (lam "x" $ \x ->
        lam "k" $ \k ->
-           (cps =<< ((return $ weak $ weak $ weak body) @@ (weak <$> var x)))
+           (cps =<< ((return $ weak $ weak $ weak body) @@ (var' (F x))))
              @@
-             (λ "m" tm $ \m -> app (weak <$> var k) (var m)))
+             (λ "m" tm $ \m -> app (var' (F k)) (var' m)))
 
 cps (AppP x y) =
   λ "k" (tm ==> tm) $ \k ->
       cps (weak x) @@ (λ "m" tm $ \m ->
         cps (weak $ weak $ y) @@ (λ "n" tm $ \n ->
-          (weak <$> var m) `app`
+          (var' (F m)) `app`
           (var n) `app`
-          (lam "q" $ \q -> (weak . weak . weak <$> var k) @@ var q)))
+          (lam "q" $ \q -> (var' (F $ F $ F k) @@ var q))))
 
 cps (SucP x) =
   λ "k" (tm ==> tm) $ \k ->
-    cps (weak x) @@ (λ "n" tm $ \n -> (weak <$> var k) @@ suc (var n))
+    cps (weak x) @@ (λ "n" tm $ \n -> (var' (F k)) @@ suc (var n))
 
 cps (termView -> VConst "f" []) =
   λ "k" (tm ==> tm) $ \k ->
@@ -448,15 +457,52 @@ g = liftClosed <$> tmConst "g"
 h :: LiftClosed γ => M (LF γ TERM)
 h = liftClosed <$> tmConst "h"
 
+
+data BaseVal
+ = VUnit
+ | VInt Integer
+
+prettyBaseVal :: BaseVal -> Doc
+prettyBaseVal VUnit    = text "()"
+prettyBaseVal (VInt n) = text (show n)
+
+instance Show (LFVal LF M BaseVal) where
+  show = show . prettyValue prettyBaseVal
+
+evalAlg :: LFAlgebra LF M BaseVal
+evalAlg "tt"        []                  = return $ ValBase $ VUnit
+evalAlg "zero"      []                  = return $ ValBase $ VInt 0
+evalAlg "suc"       [ValBase (VInt n)]  = return $ ValBase $ VInt (n+1)
+evalAlg "lam"       [f]                 = return f
+evalAlg "app"       [ValLam f, x]       = f x
+evalAlg "F"         []                  = return $ ValLam (\_ -> return $ ValBase VUnit)
+evalAlg "X"         []                  = return $ ValBase $ VInt 42
+evalAlg "nat_elim"  [z, ValLam s, ValBase (VInt n)] =
+   let rec_nat x
+          | x <= 0    = return z
+          | otherwise = s =<< rec_nat (x-1)
+    in rec_nat n
+
+evalAlg c args =
+  fail $ unwords ["Unknown constant:", show c, show args]
+
+compute :: LF E TERM -> LFVal LF M BaseVal
+compute t = runM sig $ do
+  let ?soln = emptySolution (Proxy :: Proxy LF)
+  evaluate evalAlg t Seq.empty
+
 testTerm :: LF E TERM
 testTerm = mkTerm sig $
-  add `app` three `app` five
-
+  --add `app` three `app` five
   --composeN `app` (lam "q" $ \q -> tmConst "F" `app` var q) `app` three `app` tt
-
   --lam "x" $ \x -> (f `app` var x) `app` (g `app` (h `app` var x))
-
   --lam "x" $ \x -> g `app` (h `app` var x)
+
+  (extendRecord
+    (extendRecord (record [("asdf", add `app` three `app` five),("row",row [("xxx",tp),("yyy",tm)] ) ])
+      "qwerty" (tmConst "X"))
+        "xzcvb" (λ "x" tm $ \x -> app (tmConst "F") (var x)))
+
 
 evalTerm :: LF E TERM
 evalTerm = mkTerm sig $ runChangeT $ eval testTerm
@@ -469,11 +515,15 @@ cpsTerm = mkTerm sig $ do
 
 main = inEmptyCtx $ do
    let x :: LF E TERM
-       x = typing2 --evalTerm
-   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec WeakRefl x
+       x = testTerm --typing2 --evalTerm
+   displayIO stdout $ renderSmart 0.7 80 $ runM sig $
+       ppLF TopPrec WeakRefl x
    putStrLn ""
-   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ (ppLF TopPrec WeakRefl =<< inferType WeakRefl x)
+   displayIO stdout $ renderSmart 0.7 80 $ runM sig $
+       (ppLF TopPrec WeakRefl =<< inferType WeakRefl x)
    putStrLn ""
+
+   print $ compute testTerm
 
    -- let g :: LF E GOAL
    --     g = runM sig $ runTC x
