@@ -1,6 +1,7 @@
 {-# LANGUAGE MultiWayIf #-}
 module Lang.LF.Internal.Print where
 
+import           Control.Monad.Identity
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as Map
@@ -13,6 +14,22 @@ import Lang.LF.Internal.Weak
 displayLF :: (LFModel f m, ?nms :: Set String, ?hyps::Hyps f γ, ?soln :: LFSoln f)
           => f γ s -> m String
 displayLF x = show <$> ppLF TopPrec WeakRefl x
+
+prettySignature :: LFModel f m => m Doc
+prettySignature = withCurrentSolution (inEmptyCtx (go =<< getSignature))
+ where go [] = return empty
+       go ((a ::. k) : xs) = do
+           let adoc = pretty a
+           kdoc <- ppLF TopPrec WeakRefl (runIdentity k)
+           xsdoc <- go xs
+           let x = hang 4 (group (adoc <+> text "::" <> line <> kdoc))
+           return (x <$$> xsdoc)
+       go ((c :. t) : xs) = do
+           let cdoc = pretty c
+           tdoc <- ppLF TopPrec WeakRefl (runIdentity t)
+           xsdoc <- go xs
+           let x = hang 4 (group (cdoc <+> text ":" <> line <> tdoc))
+           return (x <$$> xsdoc)
 
 prettyRecord :: Doc -> Doc -> Doc -> [(Doc, Doc)] -> Doc
 prettyRecord begin end sep flds =
@@ -59,29 +76,29 @@ prettyLF prec w x =
     KPi nm a k
       | freeVar B k -> do
          let nm' = freshName nm
-         adoc <- ppLF BinderPrec w a
+         adoc <- group <$> ppLF BinderPrec w a
          kdoc <- extendCtx nm QPi (weaken w a) $ ppLF TopPrec (WeakSkip w) k
          return $ (if prec /= TopPrec then parens else id) $
-           text "Π" <> text nm' <+> colon <+> adoc <+> comma <> nest 2 (softline <> kdoc)
+           (text "Π" <> text nm' <+> colon <+> adoc <+> comma <> softline <> kdoc)
       | otherwise -> do
          adoc <- ppLF BinderPrec w a
          kdoc <- extendCtx nm QPi (weaken w a) $ ppLF TopPrec (WeakSkip w) k
-         return $ group $ (if prec /= TopPrec then parens else id) $
+         return $ (if prec /= TopPrec then parens else id) $
            align (adoc <+> text "⇒" <> line <> kdoc)
     AType x -> group . (linebreak <>) . hang 2 <$> (ppLF prec w x)
     TyPi nm a1 a2
       | freeVar B a2 -> do
          let nm' = freshName nm
-         a1doc <- ppLF BinderPrec w a1
+         a1doc <- group <$> ppLF BinderPrec w a1
          a2doc <- extendCtx nm QPi (weaken w a1) $ ppLF TopPrec (WeakSkip w) a2
          return $ (if prec /= TopPrec then parens else id) $
-           text "Π" <> text nm' <+> colon <+> a1doc <> comma <> nest 2 (softline <> a2doc)
+           (text "Π" <> text nm' <+> colon <+> a1doc <> comma <> softline <> a2doc)
       | otherwise -> do
-         a1doc <- ppLF BinderPrec w a1
+         a1doc <- group <$> ppLF BinderPrec w a1
          a2doc <- extendCtx nm QPi (weaken w a1) $ ppLF TopPrec (WeakSkip w) a2
 
-         return $! group $ (if prec /= TopPrec then parens else id) $
-           (align (a1doc <+> text "⇒" <> softline <> a2doc))
+         return $! (if prec /= TopPrec then parens else id) $
+           align (a1doc <+> text "⇒" <> line <> a2doc)
     TyRow (PosFieldSet fldSet) -> return $
         text "row⊆" <>
         encloseSep lbrace rbrace comma (map pretty $ Set.toList fldSet)
@@ -107,7 +124,7 @@ prettyLF prec w x =
          adoc <- ppLF BinderPrec w a
          mdoc <- extendCtx nm QLam (weaken w a) $ ppLF TopPrec (WeakSkip w) m
          return $! (if prec /= TopPrec then parens else id) $
-           text "λ" <> text nm' <+> colon <+> adoc <> comma <> nest 2 (softline <> mdoc)
+           (text "λ" <> text nm' <+> colon <+> adoc <> comma <> softline <> mdoc)
     Record flds -> do
       flds' <- sequence [ ppLF TopPrec w x >>= \x' -> return (pretty f, x')
                         | (f,x) <- Map.toList flds
@@ -191,21 +208,21 @@ prettyLF prec w x =
          adoc <- ppLF BinderPrec w a
          cdoc <- extendCtx nm QForall (weaken w a) $ ppLF TopPrec (WeakSkip w) c
          return $ (if prec /= TopPrec then parens else id) $
-           text "∀" <> text nm' <+> colon <+> adoc <> comma <> nest 2 (softline <> cdoc)
+           text "∀" <> text nm' <+> colon <+> adoc <> comma <> hang 2 (softline <> cdoc)
 
     Exists nm a c -> do
          let nm' = freshName nm
          adoc <- ppLF BinderPrec w a
          cdoc <- extendCtx nm QExists (weaken w a) $ ppLF TopPrec (WeakSkip w) c
          return $ (if prec /= TopPrec then parens else id) $
-           text "∃" <> text nm' <+> colon <+> adoc <> comma <> nest 2 (softline <> cdoc)
+           text "∃" <> text nm' <+> colon <+> adoc <> comma <> hang 2 (softline <> cdoc)
 
     Sigma nm a g -> do
          let nm' = freshName nm
          adoc <- ppLF BinderPrec w a
          gdoc <- extendCtx nm QSigma (weaken w a) $ ppLF TopPrec (WeakSkip w) g
          return $ (if prec /= TopPrec then parens else id) $
-           text "Σ" <> text nm' <+> colon <+> adoc <> comma <> nest 2 (softline <> gdoc)
+           text "Σ" <> text nm' <+> colon <+> adoc <> comma <> hang 2 (softline <> gdoc)
 
     Fail -> do
          return $ text "⊥"
