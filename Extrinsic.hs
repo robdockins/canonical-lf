@@ -14,13 +14,17 @@ import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
 import           Lang.LF
 import           Lang.LF.ChangeT
-import           Lang.LF.Tree hiding (M)
-import qualified Lang.LF.Tree as Tree
+import           Lang.LF.DAG hiding (M)
+import qualified Lang.LF.DAG as DAG
+--import           Lang.LF.Tree hiding (M)
+--import qualified Lang.LF.Tree as Tree
 
 --import qualified Debug.Trace as Debug
 
-type LF = Tree.LFTree String String
-type M = Tree.M String String
+--type LF = Tree.LFTree String String
+--type M = Tree.M String String
+type LF = DAG.LFDag String String String
+type M = DAG.M String String String
 type H = Hyps LF
 
 sig :: [SigDecl LF M]
@@ -211,15 +215,15 @@ step :: LiftClosed γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TYPE)
 step x x' = tyConst "step" @@ x @@ x'
 
 
-typing :: LF E TERM
-typing = mkTerm sig $
+typing :: M (LF E TERM)
+typing = inEmptyCtx $
   tmConst "of_lam" @@ nat @@ nat @@ λ"x" tm (\x -> suc (var x)) @@
      (λ"x" tm $ \x ->
        λ"prf" (typeof (var x) nat) $ \prf ->
          of_suc (var x) (var prf))
 
-typing2 :: LF E TERM
-typing2 = mkTerm sig $
+typing2 :: M (LF E TERM)
+typing2 = inEmptyCtx $
   tmConst "of_lam" @@ nat @@ (arrow nat nat) @@
       (λ"x" tm (\x -> lam "y" $ \y -> nat_elim (var x) (lam "n" (\n -> suc (var n))) (var y))) @@
       (λ"x" tm $ \x ->
@@ -486,13 +490,13 @@ evalAlg "nat_elim"  [z, ValLam s, ValBase (VInt n)] =
 evalAlg c args =
   fail $ unwords ["Unknown constant:", show c, show args]
 
-compute :: LF E TERM -> LFVal LF M BaseVal
-compute t = runM sig $ do
+compute :: LF E TERM -> M (LFVal LF M BaseVal)
+compute t = do
   let ?soln = emptySolution (Proxy :: Proxy LF)
   evaluate evalAlg t Seq.empty
 
-testTerm :: LF E TERM
-testTerm = mkTerm sig $
+testTerm :: M (LF E TERM)
+testTerm = inEmptyCtx $
   --add `app` three `app` five
   --composeN `app` (lam "q" $ \q -> tmConst "F" `app` var q) `app` three `app` tt
   --lam "x" $ \x -> (f `app` var x) `app` (g `app` (h `app` var x))
@@ -504,26 +508,33 @@ testTerm = mkTerm sig $
         "xzcvb" (λ "x" tm $ \x -> app (tmConst "F") (var x)))
 
 
-evalTerm :: LF E TERM
-evalTerm = mkTerm sig $ runChangeT $ eval testTerm
+evalTerm :: M (LF E TERM)
+evalTerm = inEmptyCtx $ withCurrentSolution $
+  (runChangeT . eval) =<< testTerm
 
-cpsTerm :: LF E TERM
-cpsTerm = mkTerm sig $ do
-      x <- cps testTerm @@ (λ "z" tm $ \z -> var z)
-      return x
-      --runChangeT $ eval x
+cpsTerm :: M (LF E TERM)
+cpsTerm = inEmptyCtx $ withCurrentSolution $ do
+      x <- testTerm
+      cps x @@ (λ "z" tm $ \z -> var z)
 
-main = inEmptyCtx $ do
-   let x :: LF E TERM
-       x = testTerm --typing2 --evalTerm
-   displayIO stdout $ renderSmart 0.7 80 $ runM sig $
-       ppLF TopPrec WeakRefl x
-   putStrLn ""
-   displayIO stdout $ renderSmart 0.7 80 $ runM sig $
-       (ppLF TopPrec WeakRefl =<< inferType WeakRefl x)
-   putStrLn ""
+main = inEmptyCtx $ runM sig $ do
+   x <- testTerm
+   sigdoc <- prettySignature
+   xdoc   <- ppLF TopPrec WeakRefl x
+   tpdoc  <- ppLF TopPrec WeakRefl =<< inferType WeakRefl x
+   xval   <- compute x
 
-   print $ compute testTerm
+   liftIO $ do
+     displayIO stdout $ renderSmart 0.7 80 $ sigdoc
+     putStrLn ""
+     putStrLn ""
+
+     displayIO stdout $ renderSmart 0.7 80 $ xdoc
+     putStrLn ""
+     displayIO stdout $ renderSmart 0.7 80 $ tpdoc
+     putStrLn ""
+
+     print xval
 
    -- let g :: LF E GOAL
    --     g = runM sig $ runTC x

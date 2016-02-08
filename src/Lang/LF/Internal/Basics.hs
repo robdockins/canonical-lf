@@ -156,7 +156,7 @@ alphaEqLF w₁ w₂ x y =
 
 data VarSet :: Ctx * -> * where
   VarSetEmpty :: VarSet γ
-  VarSetCons  :: VarSet γ -> !Int -> VarSet (γ ::> b)
+  VarSetCons  :: !(VarSet γ) -> !Int -> VarSet (γ ::> b)
 
 mergeVarSet :: VarSet γ -> VarSet γ -> VarSet γ
 mergeVarSet VarSetEmpty y = y
@@ -184,6 +184,17 @@ varCensusLF v tm = lookupVarSet (countCensus tm) v
 
 freeVarLF :: LFModel f m => Var γ -> f γ s -> Bool
 freeVarLF v tm = inVarSet (countCensus tm) v
+
+strengthenVarSet :: VarSet (γ ::> a) -> VarSet γ
+strengthenVarSet (VarSetCons vs _) = vs
+strengthenVarSet VarSetEmpty       = VarSetEmpty
+
+weakenVarSet :: Weakening γ γ' -> VarSet γ -> VarSet γ'
+weakenVarSet WeakRefl      vs = vs
+weakenVarSet (WeakLeft w)  vs = VarSetCons (weakenVarSet w vs) 0
+weakenVarSet (WeakRight w) vs = weakenVarSet w (VarSetCons vs 0)
+weakenVarSet (WeakSkip w)  (VarSetCons vs x) = VarSetCons (weakenVarSet w vs) x
+weakenVarSet (WeakSkip w)  VarSetEmpty       = VarSetCons (weakenVarSet w VarSetEmpty) 0
 
 countCensus :: LFModel f m
          => f γ s
