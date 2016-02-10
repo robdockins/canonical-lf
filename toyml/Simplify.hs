@@ -1,7 +1,6 @@
 module Simplify where
 
 import Prelude hiding (pi, abs)
-import           Data.Set (Set)
 import           Lang.LF
 import           Terms
 
@@ -85,7 +84,7 @@ newtype InlineHeuristic
 
 simplifier :: forall γ
             . (LiftClosed γ
-              , ?hyps :: H γ, ?nms :: Set String
+              , ?hyps :: H γ
               , ?soln :: LFSoln LF
               , ?ischeap :: InlineHeuristic
               )
@@ -318,7 +317,7 @@ simplifier _ m = return m
 
 
 simplifyVal :: forall γ
-            . (LiftClosed γ, ?hyps :: H γ, ?nms :: Set String
+            . (LiftClosed γ, ?hyps :: H γ
               , ?soln :: LFSoln LF
               , ?ischeap :: InlineHeuristic
               )

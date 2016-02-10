@@ -58,6 +58,9 @@ type family LFRecordIndex (f :: Ctx * -> SORT -> *) :: *
 --   indicate how to set the values of unification variables
 type family LFSoln (f :: Ctx * -> SORT -> *) :: *
 
+data family Hyps (f :: Ctx * -> SORT -> *) :: Ctx * -> *
+
+
 data FieldSet f
   = PosFieldSet (Set (LFRecordIndex f)) -- means the set X
   | NegFieldSet (Set (LFRecordIndex f)) -- means the set (Fields - X)
@@ -152,12 +155,6 @@ data LF (f :: Ctx * -> SORT -> *) :: Ctx * -> SORT -> * where
   Sigma    :: !String -> !(f γ TYPE) -> !(f (γ ::> ()) GOAL) -> LF f γ GOAL
   Goal     :: !(f γ TERM) -> !(f γ CON) -> LF f γ GOAL
 
-
--- | A sequence of hypotheses, giving types to the free variables in γ.
-data Hyps (f :: Ctx * -> SORT -> *) (γ :: Ctx *) where
-  HNil   :: Hyps f E
-  HCons  :: !(Hyps f γ) -> !Quant -> !String -> !(f γ TYPE) -> Hyps f (γ ::> b)
-
 class LiftClosed (γ :: Ctx *) where
   liftWeakening :: Weakening E γ
   liftClosed :: LFModel f m => f E s -> f γ s
@@ -245,7 +242,7 @@ data Abstraction f :: Ctx * -> Ctx * -> * where
 data KindView f m γ where
  VType :: KindView f m γ
  VKPi :: forall f m γ
-       . (?nms :: Set String, ?hyps :: Hyps f (γ::>()))
+       . (?hyps :: Hyps f (γ::>()))
       => String
       -> Var (γ::>())
       -> f γ TYPE
@@ -259,7 +256,7 @@ data TypeView f m γ where
  VTyConst :: LFTypeConst f -> [f γ TERM] -> TypeView f m γ
  VTyRecord :: f γ TERM -> TypeView f m γ
  VTyPi :: forall f m γ
-        . (?nms :: Set String, ?hyps :: Hyps f (γ::>()))
+        . (?hyps :: Hyps f (γ::>()))
        => String
        -> Var (γ::>())
        -> f γ TYPE
@@ -277,7 +274,7 @@ data TermView f m γ where
  VRecord :: Map (LFRecordIndex f) (f γ TERM) -> TermView f m γ
  VProject :: f γ TERM -> LFRecordIndex f -> [f γ TERM] -> TermView f m γ
  VLam   :: forall f m γ
-         . (?nms :: Set String, ?hyps :: Hyps f (γ ::> ()))
+         . (?hyps :: Hyps f (γ ::> ()))
         => String
         -> Var (γ::> ())
         -> f γ TYPE
@@ -294,14 +291,14 @@ data ConstraintView f m γ where
  VUnify :: f γ TERM -> f γ TERM -> ConstraintView f m γ
  VUnifyVar :: LFUVar f -> f γ TERM -> ConstraintView f m γ
  VForall :: forall f m γ
-          . (?nms :: Set String, ?hyps :: Hyps f (γ::>()))
+          . (?hyps :: Hyps f (γ::>()))
          => String
          -> Var (γ::> ())
          -> f γ TYPE
          -> f (γ::> ()) CON
          -> ConstraintView f m γ
  VExists :: forall f m γ
-          . (?nms :: Set String, ?hyps :: Hyps f (γ::>()))
+          . (?hyps :: Hyps f (γ::>()))
          => String
          -> Var (γ::> ())
          -> f γ TYPE
@@ -331,7 +328,7 @@ data SigDecl f m
 data GoalView f m γ where
  VGoal :: f γ TERM -> f γ CON -> GoalView f m γ
  VSigma  :: forall f m γ
-          . (?nms :: Set String, ?hyps :: Hyps f (γ::>()))
+          . (?hyps :: Hyps f (γ::>()))
          => String
          -> Var (γ::> ())
          -> f γ TYPE
@@ -358,32 +355,45 @@ class (Ord (LFTypeConst f), Ord (LFConst f), Ord (LFUVar f), Ord (LFRecordIndex 
          -> f γ s
          -> m (f γ' s)
 
-  ppLF :: (?nms :: Set String, ?hyps :: Hyps f γ', ?soln :: LFSoln f)
+  ppLF :: (?hyps :: Hyps f γ', ?soln :: LFSoln f)
        => Prec
        -> Weakening γ γ'
        -> f γ s
        -> m Doc
 
-  validateKind :: (?nms::Set String, ?hyps::Hyps f γ', ?soln :: LFSoln f)
+  validateKind :: (?hyps::Hyps f γ', ?soln :: LFSoln f)
                => Weakening γ γ' -> f γ KIND  -> m ()
 
-  validateType :: (?nms::Set String, ?hyps::Hyps f γ', ?soln :: LFSoln f)
+  validateType :: (?hyps::Hyps f γ', ?soln :: LFSoln f)
                => Weakening γ γ' -> f γ TYPE  -> m ()
 
-  inferKind    :: (?nms::Set String, ?hyps::Hyps f γ', ?soln :: LFSoln f)
+  inferKind    :: (?hyps::Hyps f γ', ?soln :: LFSoln f)
                => Weakening γ γ' -> f γ ATYPE -> m (f γ' KIND)
 
-  inferType    :: (?nms::Set String, ?hyps::Hyps f γ', ?soln :: LFSoln f)
+  inferType    :: (?hyps::Hyps f γ', ?soln :: LFSoln f)
                => Weakening γ γ' -> f γ TERM  -> m (f γ' TYPE)
 
-  inferAType   :: (?nms::Set String, ?hyps::Hyps f γ', ?soln :: LFSoln f)
+  inferAType   :: (?hyps::Hyps f γ', ?soln :: LFSoln f)
                => Weakening γ γ' -> f γ ATERM -> m (f γ' TYPE)
 
-  validateGoal :: (?nms::Set String, ?hyps::Hyps f γ', ?soln :: LFSoln f)
+  validateGoal :: (?hyps::Hyps f γ', ?soln :: LFSoln f)
                => Weakening γ γ' -> f γ GOAL  -> m ()
 
-  validateCon  :: (?nms::Set String, ?hyps::Hyps f γ', ?soln :: LFSoln f)
+  validateCon  :: (?hyps::Hyps f γ', ?soln :: LFSoln f)
                => Weakening γ γ' -> f γ CON   -> m ()
+
+  inEmptyCtx :: ((?hyps :: Hyps f E) => a) -> a
+
+  extendCtx :: (?hyps :: Hyps f γ)
+            => String
+            -> Quant
+            -> f γ TYPE
+            -> ((?hyps :: Hyps f (γ::>b)) => x)
+            -> x
+
+  lookupCtx :: (?hyps :: Hyps f γ)
+            => Var γ
+            -> (String, Quant, f γ TYPE)
 
   alphaEq      :: (?soln :: LFSoln f) => f γ s -> f γ s -> Bool
   varCensus    :: (?soln :: LFSoln f) => Var γ -> f γ s -> Int
@@ -394,23 +404,23 @@ class (Ord (LFTypeConst f), Ord (LFConst f), Ord (LFUVar f), Ord (LFRecordIndex 
   constType :: LFConst f -> m (f E TYPE)
   uvarType  :: LFUVar f -> m (f E TYPE)
 
-  kindView :: (?nms :: Set String, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
+  kindView :: (?hyps :: Hyps f γ, ?soln :: LFSoln f)
            => f γ KIND
            -> KindView f m γ
 
-  typeView :: (?nms :: Set String, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
+  typeView :: (?hyps :: Hyps f γ, ?soln :: LFSoln f)
            => f γ TYPE
            -> TypeView f m γ
 
-  termView :: (?nms :: Set String, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
+  termView :: (?hyps :: Hyps f γ, ?soln :: LFSoln f)
            => f γ TERM
            -> TermView f m γ
 
-  constraintView :: (?nms :: Set String, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
+  constraintView :: (?hyps :: Hyps f γ, ?soln :: LFSoln f)
            => f γ CON
            -> ConstraintView f m γ
 
-  goalView :: (?nms :: Set String, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
+  goalView :: (?hyps :: Hyps f γ, ?soln :: LFSoln f)
            => f γ GOAL
            -> GoalView f m γ
 
@@ -423,6 +433,7 @@ class (Ord (LFTypeConst f), Ord (LFConst f), Ord (LFUVar f), Ord (LFRecordIndex 
   getSignature :: m [SigDecl f Identity]
 
   extendSignature :: [SigDecl f m] -> m x -> m x
+  freshName :: (?hyps :: Hyps f γ) => String -> String
 
   withCurrentSolution :: ((?soln :: LFSoln f) => m x) -> m x
   commitSolution :: LFSoln f -> m ()

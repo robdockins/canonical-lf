@@ -1,7 +1,6 @@
 module Lang.LF.Internal.Build where
 
 import           Control.Monad (join)
-import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -11,7 +10,6 @@ import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
 import Lang.LF.Internal.Basics
 import Lang.LF.Internal.Model
-import Lang.LF.Internal.Hyps
 import Lang.LF.Internal.Solve
 import Lang.LF.Internal.Weak
 
@@ -54,18 +52,18 @@ mkVar :: LFModel f m => Var γ -> m (f γ TERM)
 mkVar v = aterm <$> var0 v WeakRefl
 
 var :: forall f m γ γ'
-     . (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ', CtxSub γ γ')
+     . (LFModel f m, ?hyps :: Hyps f γ', CtxSub γ γ')
     => Var γ
     -> m (f γ' TERM)
 var v = do
   var' $ weakenVar (autoweakening (Proxy :: Proxy (CtxDiff γ γ'))) $ v
 
 var' :: forall f m γ
-      . (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ)
+      . (LFModel f m, ?hyps :: Hyps f γ)
      => Var γ
      -> m (f γ TERM)
 var' v = do
-  let (_,_,t) = lookupHyp ?hyps v WeakRefl
+  let (_,_,t) = lookupCtx v
   eta_expand WeakRefl t =<< var0 v WeakRefl
 
 uvar :: (LFModel f m, LiftClosed γ)
@@ -75,7 +73,7 @@ uvar u = do
    liftClosed <$> inEmptyCtx (eta_expand WeakRefl t =<< foldLF (UVar u))
 
 eta_expand
-   :: (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ')
+   :: (LFModel f m, ?hyps :: Hyps f γ')
    => Weakening γ γ'
    -> f γ TYPE
    -> f γ' ATERM
@@ -101,7 +99,7 @@ eta_expand w ty r =
 
 
 eta_expand_record
-   :: (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ')
+   :: (LFModel f m, ?hyps :: Hyps f γ')
    => Weakening γ γ'
    -> f γ TERM -- row term
    -> f γ' ATERM
@@ -122,15 +120,11 @@ eta_expand_record w row r =
     RecordModify{} -> fail "eta_expand_term : expected row value"
 
 
-λ :: (LFModel f m
-   , ?nms :: Set String
-   , ?hyps :: Hyps f γ)
+λ :: (LFModel f m, ?hyps :: Hyps f γ)
   => String
   -> m (f γ TYPE)
   -> (forall b.
-         ( ?nms :: Set String
-         , ?hyps :: Hyps f (γ::>b)
-         )
+         ( ?hyps :: Hyps f (γ::>b) )
          => Var (γ ::> b) -> m (f (γ::>b) TERM))
   -> m (f γ TERM)
 λ nm tp f = do
@@ -140,14 +134,11 @@ eta_expand_record w row r =
 
 class LFPi (s::SORT) where
   pi :: ( LFModel f m
-        , ?nms :: Set String
         , ?hyps :: Hyps f γ
         )
      => String
      -> m (f γ TYPE)
-     -> (forall b. ( ?nms :: Set String
-                   , ?hyps :: Hyps f (γ::>b)
-                   )
+     -> (forall b. ( ?hyps :: Hyps f (γ::>b) )
           => Var (γ::>b) -> m (f (γ::>b) s))
      -> m (f γ s)
 
@@ -331,7 +322,7 @@ updateRow row fld ty = do
 
 atomicProject
     :: forall m f γ γ'
-     . (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ)
+     . (LFModel f m, ?hyps :: Hyps f γ)
     => Weakening γ' γ
     -> f γ' ATERM
     -> LFRecordIndex f
@@ -343,7 +334,7 @@ atomicProject w r fld = do
 
 
 project :: forall m f γ
-         . (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ)
+         . (LFModel f m, ?hyps :: Hyps f γ)
         => m (f γ TERM)
         -> LFRecordIndex f
         -> m (f γ TERM)

@@ -2,31 +2,29 @@
 module Lang.LF.Internal.Print where
 
 import           Control.Monad.Identity
-import           Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as Map
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
 import Lang.LF.Internal.Model
-import Lang.LF.Internal.Hyps
 import Lang.LF.Internal.Weak
 
-displayLF :: (LFModel f m, ?nms :: Set String, ?hyps::Hyps f γ, ?soln :: LFSoln f)
+displayLF :: (LFModel f m, ?hyps::Hyps f γ, ?soln :: LFSoln f)
           => f γ s -> m String
 displayLF x = show <$> ppLF TopPrec WeakRefl x
 
-prettySignature :: LFModel f m => m Doc
-prettySignature = withCurrentSolution (inEmptyCtx (go =<< getSignature))
+prettySignature :: forall f m. LFModel f m => m Doc
+prettySignature = withCurrentSolution (go =<< getSignature)
  where go [] = return empty
        go ((a ::. k) : xs) = do
            let adoc = pretty a
-           kdoc <- ppLF TopPrec WeakRefl (runIdentity k)
+           kdoc <- inEmptyCtx $ ppLF TopPrec WeakRefl (runIdentity k)
            xsdoc <- go xs
            let x = hang 4 (group (adoc <+> text "::" <> line <> kdoc))
            return (x <$$> xsdoc)
        go ((c :. t) : xs) = do
            let cdoc = pretty c
-           tdoc <- ppLF TopPrec WeakRefl (runIdentity t)
+           tdoc <- inEmptyCtx $ ppLF TopPrec WeakRefl (runIdentity t)
            xsdoc <- go xs
            let x = hang 4 (group (cdoc <+> text ":" <> line <> tdoc))
            return (x <$$> xsdoc)
@@ -64,7 +62,7 @@ prettyValue ppBase v =
       ppBase x
 
 prettyLF
-      :: (LFModel f m, ?nms::Set String, ?hyps::Hyps f γ', ?soln :: LFSoln f)
+      :: (LFModel f m, ?hyps::Hyps f γ', ?soln :: LFSoln f)
       => Prec
       -> Weakening γ γ'
       -> f γ s
@@ -184,7 +182,7 @@ prettyLF prec w x =
          return $! group $ (if prec == AppRPrec then parens else id) $
             (m1doc <> line <> m2doc)
     Var ->
-      let (nm,_,_) = lookupVar ?hyps (weakenVar w B)
+      let (nm,_,_) = lookupCtx (weakenVar w B)
        in return $ text nm
 
     UVar u -> return (text "#" <> pretty u)

@@ -17,6 +17,7 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Sequence (Seq, (|>) )
 import qualified Data.Sequence as Seq
+import           Data.Set (Set)
 import qualified Data.Set as Set
 --import           Data.IntMap (IntMap)
 --import qualified Data.IntMap as IntMap
@@ -28,6 +29,7 @@ import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
 import Lang.LF.Internal.Basics
 import Lang.LF.Internal.Model
+import qualified Lang.LF.Internal.Hyps as H
 import Lang.LF.Internal.Print
 import Lang.LF.Internal.Solve
 import Lang.LF.Internal.Subst
@@ -62,6 +64,26 @@ type instance LFConst (LFDag a c i) = c
 type instance LFUVar (LFDag a c i) = DagUVar
 type instance LFRecordIndex (LFDag a c i) = i
 type instance LFSoln (LFDag a c i) = Map DagUVar (LFDag a c i E TERM)
+data instance Hyps (LFDag a c i) γ
+  = DagHyps
+    { hypList :: H.LFHyps (LFDag a c i) γ
+    , hypNms  :: Set String
+    }
+
+
+emptyDagHyps :: Hyps (LFDag a c i) E
+emptyDagHyps = DagHyps H.HNil Set.empty
+
+extendDagHyps :: Hyps (LFDag a c i) γ
+              -> String
+              -> Quant
+              -> LFDag a c i γ TYPE
+              -> Hyps (LFDag a c i) (γ::>b)
+extendDagHyps (DagHyps h nms) nm q ty =
+  let nm'  = H.freshName nms nm
+      nms' = Set.insert nm' nms
+      h'   = H.extendHyps h nm' q ty
+   in DagHyps h' nms'
 
 data LFDagState a c i =
   LFDagState
@@ -95,7 +117,6 @@ deriving instance Functor (M a c i)
 deriving instance Applicative (M a c i)
 deriving instance Monad (M a c i)
 deriving instance MonadIO (M a c i)
-
 
 instance (Ord a, Ord c, Ord i, Pretty a, Pretty c, Pretty i)
          => LFModel (LFDag a c i) (M a c i) where
@@ -211,6 +232,10 @@ instance (Ord a, Ord c, Ord i, Pretty a, Pretty c, Pretty i)
 
   evaluate = evaluateLF -- FIXME, memo tables and such...
 
+  freshName nm = H.freshName (hypNms ?hyps) nm
+  inEmptyCtx x = let ?hyps = emptyDagHyps in x
+  extendCtx nm q a x = let ?hyps = extendDagHyps ?hyps nm q a in x
+  lookupCtx v = H.lookupHyp (hypList ?hyps) v WeakRefl
 
 calcFreeVars :: LFDag a c i γ s -> VarSet γ
 calcFreeVars (DagShared x) = dagFreeVars x
@@ -330,10 +355,8 @@ addTypeConstant :: (Ord a, Ord c, Ord i, Pretty a, Pretty c, Pretty i)
 addTypeConstant sig nm m =
   case Map.lookup nm (sigFamilies sig) of
     Just _ -> fail $ unwords ["Type constant",show (pretty nm),"declared multiple times"]
-    Nothing -> flip runReaderT sig $ do
+    Nothing -> flip runReaderT sig $ inEmptyCtx $ do
            k <- unM m
-           let ?nms = Set.empty
-           let ?hyps = HNil
            let ?soln = Map.empty
            unM $ validateKind WeakRefl k
            return sig{ sigFamilies = Map.insert nm k (sigFamilies sig)
@@ -348,10 +371,8 @@ addTermConstant :: (Ord a, Ord c, Ord i, Pretty a, Pretty c, Pretty i)
 addTermConstant sig nm m =
   case Map.lookup nm (sigTerms sig) of
     Just _ -> fail $ unwords ["Term constant",show (pretty nm),"declared multiple times"]
-    Nothing -> flip runReaderT sig $ do
+    Nothing -> flip runReaderT sig $ inEmptyCtx $ do
            x <- unM m
-           let ?nms = Set.empty
-           let ?hyps = HNil
            let ?soln = Map.empty
            unM $ validateType WeakRefl x
            return sig{ sigTerms = Map.insert nm x (sigTerms sig)

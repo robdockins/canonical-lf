@@ -34,7 +34,7 @@ type H = Hyps LF
 -- Signature for the language λᵁCPS from Andrew Kennedy's
 -- "Compiling with Continuations, Continued" (ICFP 2007)
 sig :: [SigDecl LF M]
-sig = inEmptyCtx
+sig =
   [ "tm"       ::. lf_type
   , "val"      ::. lf_type
   , "ml"       ::. lf_type

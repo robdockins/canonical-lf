@@ -1,13 +1,10 @@
 module Lang.LF.Internal.View where
 
-import Data.Set (Set)
-
 import Lang.LF.Internal.Model
-import Lang.LF.Internal.Hyps
 import Lang.LF.Internal.Weak
 
 kindViewLF :: forall f m γ γ'
-            . (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ)
+            . (LFModel f m, ?hyps :: Hyps f γ)
            => Weakening γ' γ
            -> f γ' KIND
            -> KindView f m γ
@@ -22,7 +19,7 @@ kindViewLF w k =
        extendCtx nm QPi a' $ VKPi nm B a' k'
 
 typeViewLF :: forall f m γ γ'
-            . (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ)
+            . (LFModel f m, ?hyps :: Hyps f γ)
            => Weakening γ' γ
            -> f γ' TYPE
            -> TypeView f m γ
@@ -52,8 +49,7 @@ typeViewLF w a =
             TyApp p m -> go w (weaken w m : args) p
 
 termViewLF :: forall f m γ γ'
-            . (LFModel f m, ?nms :: Set String
-              , ?hyps :: Hyps f γ, ?soln :: LFSoln f)
+            . (LFModel f m, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
            => Weakening γ' γ
            -> f γ' TERM
            -> TermView f m γ
@@ -91,7 +87,7 @@ termViewLF w m =
 
 
 constraintViewLF :: forall f m γ γ'
-            . (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ)
+            . (LFModel f m, ?hyps :: Hyps f γ)
            => Weakening γ' γ
            -> f γ' CON
            -> ConstraintView f m γ
@@ -113,7 +109,7 @@ constraintViewLF w c =
          VExists nm B a' c'
 
 goalViewLF :: forall f m γ γ'
-            . (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ)
+            . (LFModel f m, ?hyps :: Hyps f γ)
            => Weakening γ' γ
            -> f γ' GOAL
            -> GoalView f m γ

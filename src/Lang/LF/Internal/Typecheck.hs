@@ -1,19 +1,17 @@
 module Lang.LF.Internal.Typecheck where
 
-import           Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as Map
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
 import Lang.LF.Internal.Basics
 import Lang.LF.Internal.Model
-import Lang.LF.Internal.Hyps
 import Lang.LF.Internal.Print
 import Lang.LF.Internal.Weak
 
 
 validateKindLF :: forall f m γ γ'
-                . (LFModel f m, ?nms::Set String, ?hyps::Hyps f γ', ?soln :: LFSoln f)
+                . (LFModel f m, ?hyps::Hyps f γ', ?soln :: LFSoln f)
                => Weakening γ γ'
                -> f γ KIND
                -> m ()
@@ -28,7 +26,7 @@ validateKindLF w tm =
       {- subordination check -}
 
 validateTypeLF :: forall f m γ γ'
-                . (LFModel f m, ?nms::Set String, ?hyps:: Hyps f γ', ?soln :: LFSoln f)
+                . (LFModel f m, ?hyps:: Hyps f γ', ?soln :: LFSoln f)
                => Weakening γ γ'
                -> f γ TYPE
                -> m ()
@@ -64,7 +62,7 @@ validateTypeLF w tm =
       KPi _ _ _ -> fail "invalid atomic type"
 
 inferKindLF :: forall f m γ γ'
-             . (LFModel f m, ?nms::Set String, ?hyps::Hyps f γ', ?soln :: LFSoln f)
+             . (LFModel f m, ?hyps::Hyps f γ', ?soln :: LFSoln f)
             => Weakening γ γ'
             -> f γ ATYPE
             -> m (f γ' KIND)
@@ -144,7 +142,7 @@ checkRowSubtype w₁ sub w₂ super =
            (fmap (const $ return False))
 
 
-checkType :: (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
+checkType :: (LFModel f m, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
           => f γ s    -- ^ context of the term
           -> f γ TERM -- ^ term to check
           -> f γ TYPE -- ^ expected type
@@ -166,7 +164,7 @@ checkType z m a = do
                         ]
 
 inferTypeLF :: forall f m γ γ'
-             . (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ', ?soln :: LFSoln f)
+             . (LFModel f m, ?hyps :: Hyps f γ', ?soln :: LFSoln f)
             => Weakening γ γ'
             -> f γ TERM
             -> m (f γ' TYPE)
@@ -245,7 +243,7 @@ inferTypeLF w m =
                           ]
 
 inferATypeLF :: forall m f γ γ'
-              . (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ', ?soln :: LFSoln f)
+              . (LFModel f m, ?hyps :: Hyps f γ', ?soln :: LFSoln f)
              => Weakening γ γ'
              -> f γ ATERM
              -> m (f γ' TYPE)
@@ -253,7 +251,7 @@ inferATypeLF w r =
   case unfoldLF r of
     Weak w' x -> inferAType (weakCompose w w') x
     Var -> do
-      let (_,_,a) = lookupVar ?hyps (weakenVar w B)
+      let (_,_,a) = lookupCtx (weakenVar w B)
       return a
     UVar u -> weaken w <$> uvarType u
     Const c -> weaken w <$> constType c
@@ -323,7 +321,7 @@ inferATypeLF w r =
 
 
 validateGoalLF :: forall f m γ γ'
-                . (LFModel f m, ?nms::Set String, ?hyps:: Hyps f γ', ?soln :: LFSoln f)
+                . (LFModel f m, ?hyps:: Hyps f γ', ?soln :: LFSoln f)
                => Weakening γ γ'
                -> f γ GOAL
                -> m ()
@@ -339,7 +337,7 @@ validateGoalLF w g =
 
 
 validateConLF :: forall f m γ γ'
-                . (LFModel f m, ?nms::Set String, ?hyps:: Hyps f γ', ?soln :: LFSoln f)
+                . (LFModel f m, ?hyps:: Hyps f γ', ?soln :: LFSoln f)
                => Weakening γ γ'
                -> f γ CON
                -> m ()

@@ -2,12 +2,11 @@ module CPS where
 
 import Prelude hiding (pi, abs)
 
-import           Data.Set (Set)
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 import           Lang.LF
 import           Terms
 
-cps_ml :: (LiftClosed γ, ?nms :: Set String, ?hyps :: H γ, ?soln :: LFSoln LF)
+cps_ml :: (LiftClosed γ, ?hyps :: H γ, ?soln :: LFSoln LF)
        => LF γ TERM -- ^ ML term to transform  :: ml
        -> LF γ TERM -- ^ static continuation :: (v ==> tm)
        -> M (LF γ TERM) -- ^ cps transformed term :: tm
@@ -87,7 +86,7 @@ cps_ml tm _ = do
      , indent 2 tm_doc
      ]
 
-tailcps_ml :: (LiftClosed γ, ?nms :: Set String, ?hyps :: H γ, ?soln :: LFSoln LF)
+tailcps_ml :: (LiftClosed γ, ?hyps :: H γ, ?soln :: LFSoln LF)
        => LF γ TERM -- ^ ML term to transform :: ml
        -> LF γ TERM -- ^ a continuation variable :: kv
        -> M (LF γ TERM) -- ^ result :: tm

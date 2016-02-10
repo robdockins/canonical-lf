@@ -14,9 +14,8 @@ module Lang.LF
 , LFConst
 , LFUVar
 , LFSoln
-
+, Hyps
 , Var(..)
-, Hyps(..)
 , Quant(..)
 , LiftClosed(..)
 , AutoWeaken

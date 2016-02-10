@@ -8,7 +8,6 @@ import Control.Monad.Trans.Class
 import Control.Monad.State
 import           Data.Proxy
 import qualified Data.Sequence as Seq
-import           Data.Set (Set)
 import           System.IO
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
@@ -185,13 +184,10 @@ app :: LiftClosed γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM)
 app x y = tmConst "app" @@ x @@ y
 
 lam :: ( LiftClosed γ
-       , ?nms :: Set String
        , ?hyps :: Hyps LF γ
        )
    => String
-   -> (forall b. ( ?nms :: Set String
-                 , ?hyps :: Hyps LF (γ ::> b)
-                 )
+   -> (forall b. ( ?hyps :: Hyps LF (γ ::> b) )
          => Var (γ::>b) -> M (LF (γ::>b) TERM))
    -> M (LF γ TERM)
 lam nm f = tmConst "lam" @@ (λ nm tm f)
@@ -258,8 +254,7 @@ pattern ArrowP t1 t2 <-
 
 cps :: forall γ
      . ( LiftClosed γ, ?soln :: LFSoln LF
-       , ?hyps :: H γ, ?nms :: Set String
-       )
+       , ?hyps :: H γ )
     => LF γ TERM
     -> M (LF γ TERM)
 
@@ -310,7 +305,7 @@ addConstraint c = do
    modify (x:)
 
 tc :: ( LiftClosed γ, ?soln :: LFSoln LF
-      , ?hyps :: H γ, ?nms :: Set String)
+      , ?hyps :: H γ)
    => Subst LF γ E
    -> LF γ TERM
    -> StateT [LF E CON] M (LF E TERM)
@@ -393,7 +388,7 @@ runTC tm = withCurrentSolution $ inEmptyCtx $ do
 
 
 -- CBV reduction to head-normal form
-eval :: (?nms :: Set String, ?hyps :: H γ, LiftClosed γ, ?soln :: LFSoln LF)
+eval :: (?hyps :: H γ, LiftClosed γ, ?soln :: LFSoln LF)
      => LF γ TERM
      -> ChangeT M (LF γ TERM)
 
@@ -431,10 +426,10 @@ eval t = Unchanged t
 
 
 five :: M (LF E TERM)
-five = inEmptyCtx $ suc $ suc $ suc $ suc $ suc $ zero
+five = suc $ suc $ suc $ suc $ suc $ zero
 
 three :: M (LF E TERM)
-three = inEmptyCtx $ suc $ suc $ suc $ zero
+three = suc $ suc $ suc $ zero
 
 add :: M (LF E TERM)
 add = inEmptyCtx $
