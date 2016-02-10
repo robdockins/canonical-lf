@@ -1,7 +1,5 @@
 module Lang.LF.Internal.Solve where
 
-import           Data.Proxy
-
 import           Lang.LF.ChangeT
 import           Lang.LF.Internal.Model
 import           Lang.LF.Internal.Weak
@@ -78,9 +76,9 @@ doSolve c soln =
         UnifyDecompose xs -> Changed (xs >>= \xs' -> return (xs', soln))
         UnifySolve u _uw r ->
           let m = aterm r in
-          case lookupUVar Proxy u soln of
+          case lookupUVar u soln of
             Nothing -> Changed $ do
-               soln' <- assignUVar Proxy u m soln
+               soln' <- assignUVar u m soln
                return (Just [], soln')
             Just m' -> do
                let r' = extractATerm m'
@@ -210,12 +208,12 @@ unifyATm w₁ w₂ x y =
     (UVar u, UVar v)
        | u == v -> UnifyDecompose (return (Just []))
     (UVar u, _)
-       | Just x' <- lookupUVar Proxy u ?soln -> UnifyDecompose $ do
+       | Just x' <- lookupUVar u ?soln -> UnifyDecompose $ do
            c <- unifyTm w₁ w₂ x' (aterm y)
            return (Just [c])
        | otherwise -> UnifySolve u w₁ (weaken w₂ y)
     (_, UVar u)
-       | Just y' <- lookupUVar Proxy u ?soln -> UnifyDecompose $ do
+       | Just y' <- lookupUVar u ?soln -> UnifyDecompose $ do
            c <- unifyTm w₁ w₂ (aterm x) y'
            return (Just [c])
        | otherwise -> UnifySolve u w₂ (weaken w₁ x)

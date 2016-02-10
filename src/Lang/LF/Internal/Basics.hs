@@ -1,7 +1,6 @@
 module Lang.LF.Internal.Basics where
 
 import           Control.Monad
-import           Data.Proxy
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Sequence (Seq)
@@ -321,7 +320,7 @@ evaluateLF eval_const = gom
           x Seq.:< _ -> applyAll x args
           Seq.EmptyL -> fail $ "insufficent arguments"
       UVar u  ->
-        case lookupUVar Proxy u ?soln of
+        case lookupUVar u ?soln of
           Just m -> do
             m' <- gom m env
             applyAll m' args

@@ -6,7 +6,6 @@ import Prelude hiding (pi, abs)
 
 import Control.Monad.Trans.Class
 import Control.Monad.State
-import           Data.Proxy
 import qualified Data.Sequence as Seq
 import           System.IO
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
@@ -487,7 +486,7 @@ evalAlg c args =
 
 compute :: LF E TERM -> M (LFVal LF M BaseVal)
 compute t = do
-  let ?soln = emptySolution (Proxy :: Proxy LF)
+  let ?soln = emptySolution
   evaluate evalAlg t Seq.empty
 
 testTerm :: M (LF E TERM)

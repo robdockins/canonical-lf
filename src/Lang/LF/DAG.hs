@@ -63,7 +63,10 @@ type instance LFTypeConst (LFDag a c i) = a
 type instance LFConst (LFDag a c i) = c
 type instance LFUVar (LFDag a c i) = DagUVar
 type instance LFRecordIndex (LFDag a c i) = i
-type instance LFSoln (LFDag a c i) = Map DagUVar (LFDag a c i E TERM)
+
+newtype instance LFSoln (LFDag a c i)
+  = Soln (Map DagUVar (LFDag a c i E TERM))
+
 data instance Hyps (LFDag a c i) γ
   = DagHyps
     { hypList :: H.LFHyps (LFDag a c i) γ
@@ -199,22 +202,22 @@ instance (Ord a, Ord c, Ord i, Pretty a, Pretty c, Pretty i)
   withCurrentSolution x = M $ do
     st <- ask
     soln <- liftIO $ readIORef (curSoln st)
-    let ?soln = soln in unM x
-  commitSolution soln = M $ do
+    let ?soln = Soln soln in unM x
+  commitSolution (Soln soln) = M $ do
     st <- ask
     liftIO $ writeIORef (curSoln st) soln
-  lookupUVar _ = Map.lookup
-  assignUVar _ v m soln = return $ Map.insert v m soln
+  lookupUVar u (Soln soln) = Map.lookup u soln
+  assignUVar v m (Soln soln)  = return $ Soln $ Map.insert v m soln
   uvarType u = M $ do
     st <- ask
     tps <- liftIO $ readIORef (uvarTypes st)
     case Map.lookup u tps of
       Just tp -> return tp
       Nothing -> fail $ unwords ["unknown uvar:", show u]
-  emptySolution _ = Map.empty
-  extendSolution u tm soln =
+  emptySolution = Soln $ Map.empty
+  extendSolution u tm (Soln soln) =
     case Map.lookup u soln of
-      Nothing -> Just $ Map.insert u tm soln
+      Nothing -> Just $ Soln $ Map.insert u tm soln
       Just _  -> Nothing
 
   solve = solveLF
@@ -357,7 +360,7 @@ addTypeConstant sig nm m =
     Just _ -> fail $ unwords ["Type constant",show (pretty nm),"declared multiple times"]
     Nothing -> flip runReaderT sig $ inEmptyCtx $ do
            k <- unM m
-           let ?soln = Map.empty
+           let ?soln = Soln Map.empty
            unM $ validateKind WeakRefl k
            return sig{ sigFamilies = Map.insert nm k (sigFamilies sig)
                      , sigDecls = sigDecls sig |> (nm ::. return k)
@@ -373,7 +376,7 @@ addTermConstant sig nm m =
     Just _ -> fail $ unwords ["Term constant",show (pretty nm),"declared multiple times"]
     Nothing -> flip runReaderT sig $ inEmptyCtx $ do
            x <- unM m
-           let ?soln = Map.empty
+           let ?soln = Soln Map.empty
            unM $ validateType WeakRefl x
            return sig{ sigTerms = Map.insert nm x (sigTerms sig)
                      , sigDecls = sigDecls sig |> (nm :. return x)
@@ -385,7 +388,7 @@ runM :: (Ord a, Ord c, Ord i, Pretty a, Pretty c, Pretty i)
      -> IO x
 runM sig m = do
   st <- newLFDagState
-  let ?soln = Map.empty
+  let ?soln = Soln Map.empty
   either fail return =<<
    ( runExceptT
    $ flip runReaderT st

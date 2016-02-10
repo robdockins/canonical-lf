@@ -2,7 +2,6 @@
 
 module Lang.LF.Internal.Subst where
 
-import           Data.Proxy
 import qualified Data.Map.Strict as Map
 
 import Lang.LF.ChangeT
@@ -131,7 +130,7 @@ instantiateLF tm =
           (Right m1', Unchanged _) -> Right (app m1' (return m2))
           (Right m1', Changed m2') -> Right (app m1' m2')
       UVar u
-        | Just tm <- lookupUVar Proxy u ?soln -> Right (runChangeT $ instantiate tm)
+        | Just tm <- lookupUVar u ?soln -> Right (runChangeT $ instantiate tm)
         | otherwise -> Left atm
 
 
@@ -314,7 +313,7 @@ hsubstTm sub tm =
            UVar u ->
              case sub of
                SubstRefl ->
-                 case lookupUVar Proxy u ?soln of
+                 case lookupUVar u ?soln of
                    Just m  -> return $ Left m
                    Nothing -> return $ Right tm
                SubstWeak w s -> either (Left . weaken w) (Right . weaken w) <$> hsubstTm s tm

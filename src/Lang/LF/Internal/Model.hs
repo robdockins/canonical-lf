@@ -2,7 +2,6 @@
 module Lang.LF.Internal.Model where
 
 import           Control.Monad.Identity
-import           Data.Proxy
 import           Data.Map.Strict (Map)
 import           Data.Sequence (Seq)
 import           Data.Set (Set)
@@ -56,7 +55,7 @@ type family LFRecordIndex (f :: Ctx * -> SORT -> *) :: *
 
 -- | The type used to represent solutions to constraints; these
 --   indicate how to set the values of unification variables
-type family LFSoln (f :: Ctx * -> SORT -> *) :: *
+data family LFSoln (f :: Ctx * -> SORT -> *) :: *
 
 data family Hyps (f :: Ctx * -> SORT -> *) :: Ctx * -> *
 
@@ -437,10 +436,10 @@ class (Ord (LFTypeConst f), Ord (LFConst f), Ord (LFUVar f), Ord (LFRecordIndex 
 
   withCurrentSolution :: ((?soln :: LFSoln f) => m x) -> m x
   commitSolution :: LFSoln f -> m ()
-  lookupUVar :: Proxy f -> LFUVar f -> LFSoln f -> Maybe (f E TERM)
-  assignUVar :: Proxy f -> LFUVar f -> f E TERM -> LFSoln f -> m (LFSoln f)
+  lookupUVar :: LFUVar f -> LFSoln f -> Maybe (f E TERM)
+  assignUVar :: LFUVar f -> f E TERM -> LFSoln f -> m (LFSoln f)
   freshUVar :: f E TYPE -> m (LFUVar f)
-  emptySolution :: Proxy f -> LFSoln f
+  emptySolution :: LFSoln f
   extendSolution :: LFUVar f -> f E TERM -> LFSoln f -> Maybe (LFSoln f)
 
   instantiate :: (?soln :: LFSoln f)
