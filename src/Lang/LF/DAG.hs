@@ -17,9 +17,11 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Sequence (Seq, (|>) )
 import qualified Data.Sequence as Seq
-import           Data.Set (Set)
 import qualified Data.Set as Set
-import           Data.Word
+--import           Data.IntMap (IntMap)
+--import qualified Data.IntMap as IntMap
+import           Data.IntSet (IntSet)
+import qualified Data.IntSet as IntSet
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
 
@@ -34,16 +36,19 @@ import Lang.LF.Internal.View
 import Lang.LF.Internal.Weak
 
 
-data DagUVar = DagUVar Word64
-  deriving (Eq,Ord,Show)
+data DagUVar = DagUVar Int
+  deriving (Eq,Ord)
 
 instance Pretty DagUVar where
   pretty (DagUVar i) = text "#" <> text (show i)
+instance Show DagUVar where
+  show = show . pretty
+
 
 data DagTerm a c i γ (s::SORT) =
    DagTerm
-   { dagIndex     :: !Word64
-   , dagFreeUVars :: !(Set DagUVar)
+   { dagIndex     :: !Int
+   , dagFreeUVars :: !IntSet
    , dagFreeVars  :: !(VarSet γ)
    , dagTerm      :: !(LF (LFDag a c i) γ s)
    }
@@ -60,13 +65,16 @@ type instance LFSoln (LFDag a c i) = Map DagUVar (LFDag a c i E TERM)
 
 data LFDagState a c i =
   LFDagState
-  { indexGen    :: IORef Word64
-  , uvarGen     :: IORef Word64
-  , curSoln     :: IORef (Map DagUVar (LFDag a c i E TERM))
-  , uvarTypes   :: IORef (Map DagUVar (LFDag a c i E TYPE))
-  , sigFamilies :: Map a (LFDag a c i E KIND)
-  , sigTerms    :: Map c (LFDag a c i E TYPE)
-  , sigDecls    :: Seq (SigDecl (LFDag a c i) Identity)
+  { indexGen     :: IORef Int
+  , uvarGen      :: IORef Int
+  , curSoln      :: IORef (Map DagUVar (LFDag a c i E TERM))
+  , uvarTypes    :: IORef (Map DagUVar (LFDag a c i E TYPE))
+  , sigFamilies  :: Map a (LFDag a c i E KIND)
+  , sigTerms     :: Map c (LFDag a c i E TYPE)
+  , sigDecls     :: Seq (SigDecl (LFDag a c i) Identity)
+--  , tcValidKinds :: IORef IntSet
+--  , tcValidTypes :: IORef IntSet
+--  , tcKinds      :: IORef (IntMap (LFDag a c i E
   }
 
 newLFDagState :: IO (LFDagState a c i)
@@ -151,7 +159,8 @@ instance (Ord a, Ord c, Ord i, Pretty a, Pretty c, Pretty i)
 
   varCensus v x = lookupVarSet (calcFreeVars x) v
   freeVar v x = inVarSet (calcFreeVars x) v
-  freeUVars x = calcFreeUVars x
+  freeUVars x =
+    Set.fromDistinctAscList $ map DagUVar $ IntSet.toAscList $ calcFreeUVars x
 
   kindView = kindViewLF WeakRefl
   typeView = typeViewLF WeakRefl
@@ -258,59 +267,59 @@ calcFreeVars' t =
     Goal m c          -> calcFreeVars m `mergeVarSet`
                          calcFreeVars c
 
-calcFreeUVars :: LFDag a c i γ s -> Set DagUVar
+calcFreeUVars :: LFDag a c i γ s -> IntSet
 calcFreeUVars (DagShared tm) = dagFreeUVars tm
 calcFreeUVars (DagUnshared tm) = calcFreeUVars' tm
 
-calcFreeUVars' :: LF (LFDag a c i) γ s -> Set DagUVar
+calcFreeUVars' :: LF (LFDag a c i) γ s -> IntSet
 calcFreeUVars' t =
   case t of
     Weak _w x         -> calcFreeUVars x
 
-    Type              -> Set.empty
-    KPi _ t k         -> calcFreeUVars t `Set.union`
+    Type              -> IntSet.empty
+    KPi _ t k         -> calcFreeUVars t `IntSet.union`
                          calcFreeUVars k
 
     AType x           -> calcFreeUVars x
-    TyPi _ t1 t2      -> calcFreeUVars t1 `Set.union`
+    TyPi _ t1 t2      -> calcFreeUVars t1 `IntSet.union`
                          calcFreeUVars t2
 
     TyRecord row      -> calcFreeUVars row
-    TyRow _           -> Set.empty
-    TyConst _         -> Set.empty
-    TyApp r m         -> calcFreeUVars r `Set.union`
+    TyRow _           -> IntSet.empty
+    TyConst _         -> IntSet.empty
+    TyApp r m         -> calcFreeUVars r `IntSet.union`
                          calcFreeUVars m
 
     ATerm x           -> calcFreeUVars x
-    Lam _ t m         -> calcFreeUVars t `Set.union`
+    Lam _ t m         -> calcFreeUVars t `IntSet.union`
                          calcFreeUVars m
-    Row xs            -> Set.unions $
+    Row xs            -> IntSet.unions $
                            map calcFreeUVars $ Map.elems xs
-    RowModify r _ ins -> Set.unions $ (calcFreeUVars r:) $
+    RowModify r _ ins -> IntSet.unions $ (calcFreeUVars r:) $
                            map calcFreeUVars $ Map.elems ins
-    Record xs         -> Set.unions $
+    Record xs         -> IntSet.unions $
                            map calcFreeUVars $ Map.elems xs
-    RecordModify r _ ins -> Set.unions $ (calcFreeUVars r:) $
+    RecordModify r _ ins -> IntSet.unions $ (calcFreeUVars r:) $
                               map calcFreeUVars $ Map.elems ins
 
-    Var               -> Set.empty
-    UVar u            -> Set.singleton u
-    Const _           -> Set.empty
-    App r m           -> calcFreeUVars r `Set.union`
+    Var               -> IntSet.empty
+    UVar (DagUVar u)  -> IntSet.singleton u
+    Const _           -> IntSet.empty
+    App r m           -> calcFreeUVars r `IntSet.union`
                          calcFreeUVars m
     Project r _       -> calcFreeUVars r
 
-    Fail              -> Set.empty
-    Unify x y         -> calcFreeUVars x `Set.union`
+    Fail              -> IntSet.empty
+    Unify x y         -> calcFreeUVars x `IntSet.union`
                          calcFreeUVars y
-    And xs            -> Set.unions $ map calcFreeUVars xs
-    Forall _ t c      -> calcFreeUVars t `Set.union`
+    And xs            -> IntSet.unions $ map calcFreeUVars xs
+    Forall _ t c      -> calcFreeUVars t `IntSet.union`
                          calcFreeUVars c
-    Exists _ t c      -> calcFreeUVars t `Set.union`
+    Exists _ t c      -> calcFreeUVars t `IntSet.union`
                          calcFreeUVars c
-    Sigma _ t g       -> calcFreeUVars t `Set.union`
+    Sigma _ t g       -> calcFreeUVars t `IntSet.union`
                          calcFreeUVars g
-    Goal m c          -> calcFreeUVars m `Set.union`
+    Goal m c          -> calcFreeUVars m `IntSet.union`
                          calcFreeUVars c
 
 addTypeConstant :: (Ord a, Ord c, Ord i, Pretty a, Pretty c, Pretty i)
