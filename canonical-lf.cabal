@@ -33,6 +33,7 @@ library
     ansi-wl-pprint,
     bound >= 1.0.6,
     containers,
+    hashable,
     mtl,
     text,
     transformers

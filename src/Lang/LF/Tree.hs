@@ -108,7 +108,7 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
   validateGoal = validateGoalLF
   validateCon = validateConLF
 
-  alphaEq = alphaEqLF WeakRefl WeakRefl
+  alphaEqFull = alphaEqLF
 
   evaluate = evaluateLF
 

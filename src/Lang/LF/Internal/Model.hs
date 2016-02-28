@@ -209,6 +209,7 @@ data Weakening γ γ' where
   WeakRight :: !(Weakening (γ::>b) γ') -> Weakening γ γ'
   WeakSkip  :: !(Weakening γ γ') -> Weakening (γ::>b) (γ'::>b)
 
+
 -- | A substituion from γ to γ' represents a function that
 --   sends a term in context γ to one in context γ' that
 --   assigns variables in γ to terms with free variables in γ'.
@@ -394,9 +395,12 @@ class (Ord (LFTypeConst f), Ord (LFConst f), Ord (LFUVar f), Ord (LFRecordIndex 
             => Var γ
             -> (String, Quant, f γ TYPE)
 
-  alphaEq      :: (?soln :: LFSoln f) => f γ s -> f γ s -> Bool
-  varCensus    :: (?soln :: LFSoln f) => Var γ -> f γ s -> Int
-  freeVar      :: (?soln :: LFSoln f) => Var γ -> f γ s -> Bool
+  alphaEqFull  :: Weakening γ₁ γ -> Weakening γ₂ γ -> f γ₁ s -> f γ₂ s -> Bool
+  alphaEq :: f γ s -> f γ s -> Bool
+  alphaEq = alphaEqFull WeakRefl WeakRefl
+
+  varCensus    :: Var γ -> f γ s -> Int
+  freeVar      :: Var γ -> f γ s -> Bool
   freeUVars    :: f γ s -> Set (LFUVar f)
 
   constKind :: LFTypeConst f -> m (f E KIND)

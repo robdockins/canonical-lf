@@ -11,8 +11,10 @@ module Lang.LF.DAG
 import           Control.Monad.Except
 import           Control.Monad.Identity
 import           Control.Monad.Reader
+import           Data.Bits
 import           Data.Foldable
 import           Data.IORef
+import           Data.Hashable
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Sequence (Seq, (|>) )
@@ -39,20 +41,22 @@ import Lang.LF.Internal.Weak
 
 
 data DagUVar = DagUVar Int
-  deriving (Eq,Ord)
+  deriving (Eq, Ord)
 
 instance Pretty DagUVar where
   pretty (DagUVar i) = text "#" <> text (show i)
 instance Show DagUVar where
   show = show . pretty
-
+instance Hashable DagUVar where
+  hashWithSalt c (DagUVar x) = hashWithSalt c x
 
 data DagTerm a c i γ (s::SORT) =
    DagTerm
-   { dagIndex     :: !Int
-   , dagFreeUVars :: !IntSet
-   , dagFreeVars  :: !(VarSet γ)
-   , dagTerm      :: !(LF (LFDag a c i) γ s)
+   { dagIndex      :: !Int
+   , dagFreeUVars  :: !IntSet
+   , dagFreeVars   :: !(VarSet γ)
+   , dagStructHash :: !Int
+   , dagTerm       :: !(LF (LFDag a c i) γ s)
    }
 
 data LFDag a c i γ (s::SORT)
@@ -121,7 +125,10 @@ deriving instance Applicative (M a c i)
 deriving instance Monad (M a c i)
 deriving instance MonadIO (M a c i)
 
-instance (Ord a, Ord c, Ord i, Pretty a, Pretty c, Pretty i)
+instance ( Ord a, Ord c, Ord i
+         , Pretty a, Pretty c, Pretty i
+         , Hashable a, Hashable c, Hashable i
+         )
          => LFModel (LFDag a c i) (M a c i) where
 
   unfoldLF m =
@@ -145,10 +152,12 @@ instance (Ord a, Ord c, Ord i, Pretty a, Pretty c, Pretty i)
     idx <- liftIO $ atomicModifyIORef' (indexGen st) (\n -> (n+1,n))
     let fv  = calcFreeVars' tm
     let ufv = calcFreeUVars' tm
+    let hash = structuralHash varCensus (calcStructHash varCensus) tm
     let dtm = DagTerm
               { dagIndex = idx
               , dagFreeVars = fv
               , dagFreeUVars = ufv
+              , dagStructHash = hash
               , dagTerm = tm
               }
     return $ DagShared dtm
@@ -165,10 +174,25 @@ instance (Ord a, Ord c, Ord i, Pretty a, Pretty c, Pretty i)
   validateGoal = validateGoalLF
   validateCon = validateConLF
 
-  -- FIXME? Can we do better than this for alpha-equivalance?
-  alphaEq (DagShared x) (DagShared y)
-     | dagIndex x == dagIndex y = True
-  alphaEq x y = alphaEqLF WeakRefl WeakRefl x y
+  alphaEq = go WeakRefl WeakRefl
+   where go :: Weakening γ₁ γ -> Weakening γ₂ γ
+            -> LFDag a c i γ₁ s -> LFDag a c i γ₂ s -> Bool
+         go w₁ w₂ (DagUnshared (Weak w' x)) y = go (weakCompose w₁ w') w₂ x y
+         go w₁ w₂ x (DagUnshared (Weak w' y)) = go w₁ (weakCompose w₂ w') x y
+         go w₁ w₂ (DagShared x) (DagShared y)
+             | weakenVarSet w₁ (dagFreeVars x) /=
+               weakenVarSet w₂ (dagFreeVars y)    = False
+             | dagFreeUVars  x /= dagFreeUVars y  = False
+         go w₁ w₂ x y = alphaEqFull w₁ w₂ x y
+
+  alphaEqFull w₁ w₂ (DagShared x) (DagShared y)
+     -- FIXME, I'm not totally happy with this.  It seems like we should be able to,
+     -- at least most of the time, definitively say when the same term applied to
+     -- two different weakenings produce different terms...
+     | dagIndex x == dagIndex y
+       && equalWeakening w₁ w₂ = True
+     | dagStructHash x /= dagStructHash y = False
+  alphaEqFull w₁ w₂ x y = alphaEqLF w₁ w₂ x y
 
   constKind a = M $ do
      sig <- ask
@@ -239,6 +263,36 @@ instance (Ord a, Ord c, Ord i, Pretty a, Pretty c, Pretty i)
   inEmptyCtx x = let ?hyps = emptyDagHyps in x
   extendCtx nm q a x = let ?hyps = extendDagHyps ?hyps nm q a in x
   lookupCtx v = H.lookupHyp (hypList ?hyps) v WeakRefl
+
+
+hashVarSet :: Int -> VarSet γ -> Int
+hashVarSet _ VarSetEmpty      = 0
+hashVarSet c (VarSetCons s 0) =
+  let c' = hashWithSalt 0 c
+   in hashVarSet c' s
+hashVarSet c (VarSetCons s x) =
+  let c' = hashWithSalt x c
+   in hashWithSalt c' (hashVarSet c' s)
+
+dagHash :: (Hashable a, Hashable c, Hashable i)
+        => LFDag a c i γ s
+        -> Int
+dagHash x =
+  let census v a = lookupVarSet (calcFreeVars a) v
+  in  xor (hashVarSet 0 (calcFreeVars x))
+          (calcStructHash census x)
+
+instance (Hashable a, Hashable c, Hashable i) => Hashable (LFDag a c i γ s) where
+   hash = dagHash
+   hashWithSalt s x = hashWithSalt s (dagHash x)
+
+
+calcStructHash :: (Hashable a, Hashable c, Hashable i)
+               => (forall γ s. Var γ -> LFDag a c i γ s -> Int)
+               -> LFDag a c i γ s
+               -> Int
+calcStructHash _census (DagShared x) = dagStructHash x
+calcStructHash census  (DagUnshared tf) = structuralHash census (calcStructHash census) tf
 
 calcFreeVars :: LFDag a c i γ s -> VarSet γ
 calcFreeVars (DagShared x) = dagFreeVars x
@@ -350,7 +404,10 @@ calcFreeUVars' t =
     Goal m c          -> calcFreeUVars m `IntSet.union`
                          calcFreeUVars c
 
-addTypeConstant :: (Ord a, Ord c, Ord i, Pretty a, Pretty c, Pretty i)
+addTypeConstant :: (Ord a, Ord c, Ord i
+                   , Pretty a, Pretty c, Pretty i
+                   , Hashable a, Hashable c, Hashable i
+                   )
                 => LFDagState a c i
                 -> a
                 -> M a c i (LFDag a c i E KIND)
@@ -366,7 +423,10 @@ addTypeConstant sig nm m =
                      , sigDecls = sigDecls sig |> (nm ::. return k)
                      }
 
-addTermConstant :: (Ord a, Ord c, Ord i, Pretty a, Pretty c, Pretty i)
+addTermConstant :: (Ord a, Ord c, Ord i
+                   , Pretty a, Pretty c, Pretty i
+                   , Hashable a, Hashable c, Hashable i
+                   )
                 => LFDagState a c i
                 -> c
                 -> M a c i (LFDag a c i E TYPE)
@@ -382,7 +442,10 @@ addTermConstant sig nm m =
                      , sigDecls = sigDecls sig |> (nm :. return x)
                      }
 
-runM :: (Ord a, Ord c, Ord i, Pretty a, Pretty c, Pretty i)
+runM :: (Ord a, Ord c, Ord i
+        , Pretty a, Pretty c, Pretty i
+        , Hashable a, Hashable c, Hashable i
+        )
      => [SigDecl (LFDag a c i) (M a c i)]
      -> ((?soln :: LFSoln (LFDag a c i)) => M a c i x)
      -> IO x
