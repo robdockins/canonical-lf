@@ -1,7 +1,6 @@
 module Simplify where
 
 import Prelude hiding (pi, abs)
-import           Data.Set (Set)
 import           Lang.LF
 import           Terms
 
@@ -85,7 +84,7 @@ newtype InlineHeuristic
 
 simplifier :: forall γ
             . (LiftClosed γ
-              , ?hyps :: H γ, ?nms :: Set String
+              , ?hyps :: H γ
               , ?soln :: LFSoln LF
               , ?ischeap :: InlineHeuristic
               )
@@ -137,7 +136,7 @@ simplifier bd (termView -> VConst "letcont" [k,m]) = do
                      (termView -> VConst "enter" [ j, termView -> VVar x' []]))
           | x == x' =
              case termView j of
-               VVar (F j') [] -> Just $ var j'
+               VVar (F j') [] -> Just $ mkVar j'
                VConst c []    -> Just $ tmConst c
                _ -> Nothing
        tryEtaCont _ = Nothing
@@ -318,7 +317,7 @@ simplifier _ m = return m
 
 
 simplifyVal :: forall γ
-            . (LiftClosed γ, ?hyps :: H γ, ?nms :: Set String
+            . (LiftClosed γ, ?hyps :: H γ
               , ?soln :: LFSoln LF
               , ?ischeap :: InlineHeuristic
               )

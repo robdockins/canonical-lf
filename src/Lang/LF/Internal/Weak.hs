@@ -112,6 +112,20 @@ weakNormalize w0 = go w0 WkRefl
    go (WeakSkip w)  WkRefl   = weakSkip (go w WkRefl)
 
 
+equalWeakening
+  :: Weakening γ₁ γ
+  -> Weakening γ₂ γ
+  -> Bool
+equalWeakening w₁ w₂ = go (weakNormalize w₁) (weakNormalize w₂)
+ where
+   go :: Weakening γ₁ γ -> Weakening γ₂ γ -> Bool
+   go WeakRefl     WeakRefl     = True
+   go (WeakLeft x) (WeakLeft y) = go x y
+   go (WeakSkip x) (WeakSkip y) = go x y
+   go _ _ = False
+
+
+
 -- | Compute the longest common prefix of two weakenings.
 --   This operation is used to hoist weakenings "outside" as
 --   far as possible when computing the result of applications.
@@ -230,7 +244,8 @@ substWeak s (WeakRight w) k =
 --      [[ a ]] ∘ [[ w ]] == [[ w' ]] ∘ [[ a' ]]
 --
 --   The resulting abstraction will be mildly
---   mildly simpler than the one you started with.
+--   mildly simpler than the one you started with,
+--   but the weakening may be more complicated.
 --
 --   This function is written in a continuaion-passing
 --   style so that the new intermediate context can be

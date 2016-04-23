@@ -2,10 +2,10 @@
 
 module Lang.LF.Internal.Subst where
 
-import Data.Proxy
+import qualified Data.Map.Strict as Map
 
 import Lang.LF.ChangeT
-import Lang.LF.Internal.Build
+import Lang.LF.Internal.Basics
 import Lang.LF.Internal.Model
 import Lang.LF.Internal.Solve
 import Lang.LF.Internal.Weak
@@ -61,26 +61,28 @@ instantiateLF tm =
     TyPi nm t1 t2 -> onChange tm foldLF (TyPi nm <$> instantiate t1 <*> instantiate t2)
     TyConst _ -> Unchanged tm
     TyApp t m -> onChange tm foldLF (TyApp <$> instantiate t <*> instantiate m)
+    TyRecord row -> onChange tm foldLF (TyRecord <$> instantiate row)
+    TyRow _ -> Unchanged tm
 
     ATerm x ->
       case go x of
         Left _  -> Unchanged tm
         Right m -> Changed m
     Lam nm ty m -> onChange tm foldLF (Lam nm <$> instantiate ty <*> instantiate m)
+    Record flds -> onChange tm foldLF (Record <$> traverse instantiate flds)
+    RecordModify r dels ins -> onChange tm foldLF
+        (RecordModify <$> instantiate r <*> return dels <*> traverse instantiate ins)
+    Row flds    -> onChange tm foldLF (Row <$> traverse instantiate flds)
+    RowModify r dels ins -> onChange tm foldLF
+        (RowModify <$> instantiate r <*> return dels <*> traverse instantiate ins)
 
     Var -> Unchanged tm
     Const _ -> Unchanged tm
     App _ _ -> Unchanged tm
     UVar _ -> Unchanged tm
+    Project _ _ -> Unchanged tm
 
     Fail -> Unchanged tm
-
-    UnifyVar u r ->
-      case go r of
-        Left _ -> Unchanged tm
-        Right mr -> Changed $ do
-          r' <- extractATerm <$> mr
-          foldLF (UnifyVar u r')
 
     Unify x y -> doUnify x y
 
@@ -117,6 +119,10 @@ instantiateLF tm =
           Right m -> Right (weaken w <$> m)
       Var     -> Left atm
       Const _ -> Left atm
+      Project m fld ->
+        case instantiate m of
+          Unchanged _ -> Left atm
+          Changed m1' -> Right (aterm <$> (foldLF =<< (Project <$> m1' <*> return fld)))
       App m1 m2 ->
         case (go m1, instantiate m2) of
           (Left _, Unchanged _) -> Left atm
@@ -124,7 +130,7 @@ instantiateLF tm =
           (Right m1', Unchanged _) -> Right (app m1' (return m2))
           (Right m1', Changed m2') -> Right (app m1' m2')
       UVar u
-        | Just tm <- lookupUVar Proxy u ?soln -> Right (runChangeT $ instantiate tm)
+        | Just tm <- lookupUVar u ?soln -> Right (runChangeT $ instantiate tm)
         | otherwise -> Left atm
 
 
@@ -159,11 +165,20 @@ abstractLF abs tm =
 
     AType x      -> foldLF =<< (AType <$> abstractUVars abs x)
     TyPi nm a a' -> foldLF =<< (TyPi nm <$> abstractUVars abs a <*> abstractUVars abs' a')
+    TyRecord row -> foldLF =<< (TyRecord <$> abstractUVars abs row)
+    TyRow fldSet -> foldLF (TyRow fldSet)
 
     TyConst _ -> return $ weaken (absWeaken abs) tm
 
     TyApp p m    -> foldLF =<< (TyApp <$> abstractUVars abs p <*> abstractUVars abs m)
     Lam nm a m   -> foldLF =<< (Lam nm <$> abstractUVars abs a <*> abstractUVars abs' m)
+    Record flds  -> foldLF =<< (Record <$> traverse (abstractUVars abs) flds)
+    RecordModify r del ins -> foldLF =<<
+       (RecordModify <$> abstractUVars abs r <*> return del <*> traverse (abstractUVars abs) ins)
+
+    Row flds     -> foldLF =<< (Row <$> traverse (abstractUVars abs) flds)
+    RowModify r del ins -> foldLF =<<
+       (RowModify <$> abstractUVars abs r <*> return del <*> traverse (abstractUVars abs) ins)
 
     And cs       -> foldLF . And =<< (mapM (abstractUVars abs) cs)
 
@@ -171,15 +186,6 @@ abstractLF abs tm =
        r1' <- abstractUVars abs r1
        r2' <- abstractUVars abs r2
        foldLF (Unify r1' r2')
-
-    UnifyVar u r -> do
-         r' <- abstractUVars abs r
-         case absUVar abs u of
-           Just v -> do
-             v' <- var0 v WeakRefl
-             foldLF (Unify v' r')
-           Nothing ->
-             foldLF (UnifyVar u r')
 
     Forall nm a c -> foldLF =<< (Forall nm <$> abstractUVars abs a <*> abstractUVars abs' c)
     Exists nm a c -> foldLF =<< (Exists nm <$> abstractUVars abs a <*> abstractUVars abs' c)
@@ -193,6 +199,8 @@ abstractLF abs tm =
 
     Var          -> return $ weaken (absWeaken abs) tm
     App x y      -> foldLF =<< (App <$> abstractUVars abs x <*> abstractUVars abs y)
+    Project m fld -> foldLF =<< (Project <$> abstractUVars abs m <*> return fld)
+
     UVar u ->
       case absUVar abs u of
         Just v ->
@@ -221,8 +229,10 @@ hsubstLF sub tm =
 
      KPi nm a k   -> foldLF =<< (KPi nm <$> hsubst sub a <*> hsubst sub' k)
 
-     AType x      -> foldLF =<< (AType <$> hsubst sub x)
-     TyPi nm a a' -> foldLF =<< (TyPi nm <$> hsubst sub a <*> hsubst sub' a')
+     AType x       -> foldLF =<< (AType <$> hsubst sub x)
+     TyPi nm a a'  -> foldLF =<< (TyPi nm <$> hsubst sub a <*> hsubst sub' a')
+     TyRecord row  -> foldLF =<< (TyRecord <$> hsubst sub row)
+     TyRow fldSet  -> foldLF (TyRow fldSet)
 
      TyConst _ ->
         case sub of
@@ -234,16 +244,28 @@ hsubstLF sub tm =
 
      Lam nm a m   -> foldLF =<< (Lam nm <$> hsubst sub a <*> hsubst sub' m)
 
+     Record flds -> foldLF =<< (Record <$> traverse (hsubst sub) flds)
+     RecordModify r del ins -> do
+        x    <- hsubstTm sub r
+        ins' <- traverse (hsubst sub) ins
+        case x of
+          Left m -> recordModify m WeakRefl del ins'
+          Right r' -> foldLF (RecordModify r' del ins')
+
+     Row flds    -> foldLF =<< (Row <$> traverse (hsubst sub) flds)
+     RowModify r del ins -> do
+        x    <- hsubstTm sub r
+        ins' <- traverse (hsubst sub) ins
+        case x of
+          Left m -> rowModify m WeakRefl del ins'
+          Right r' -> foldLF (RowModify r' del ins')
+
      And cs       -> foldLF . And =<< (mapM (hsubst sub) cs)
 
      Unify r1 r2  -> do
         r1' <- f =<< hsubstTm sub r1
         r2' <- f =<< hsubstTm sub r2
         foldLF (Unify r1' r2')
-
-     UnifyVar u r -> do
-         r' <- f =<< hsubstTm sub r
-         foldLF (UnifyVar u r')
 
      Forall nm a c -> foldLF =<< (Forall nm <$> hsubst sub a <*> hsubst sub' c)
      Exists nm a c -> foldLF =<< (Exists nm <$> hsubst sub a <*> hsubst sub' c)
@@ -252,11 +274,12 @@ hsubstLF sub tm =
      Goal m c      -> foldLF =<< (Goal <$> hsubst sub m <*> hsubst sub c)
      Fail          -> foldLF Fail
 
-     ATerm x      -> either return (foldLF . ATerm) =<< hsubstTm sub x
-     Const _      -> f =<< hsubstTm sub tm
-     Var          -> f =<< hsubstTm sub tm
-     App _ _      -> f =<< hsubstTm sub tm
-     UVar _       -> f =<< hsubstTm sub tm
+     ATerm x       -> either return (return . aterm) =<< hsubstTm sub x
+     Const _       -> f =<< hsubstTm sub tm
+     Var           -> f =<< hsubstTm sub tm
+     App _ _       -> f =<< hsubstTm sub tm
+     UVar _        -> f =<< hsubstTm sub tm
+     Project _ _   -> f =<< hsubstTm sub tm
 
  where
   sub' :: forall b. Subst f (γ ::> b) (γ' ::> b)
@@ -265,6 +288,7 @@ hsubstLF sub tm =
   f :: Either (f γ' TERM) (f γ' ATERM) -> m (f γ' ATERM)
   f (Left r)  = return $ extractATerm r
   f (Right r) = return r
+
 
 {- FIXME? rewrite this in continuation passing form
     to avoid repeated matching on Either values. -}
@@ -289,7 +313,7 @@ hsubstTm sub tm =
            UVar u ->
              case sub of
                SubstRefl ->
-                 case lookupUVar Proxy u ?soln of
+                 case lookupUVar u ?soln of
                    Just m  -> return $ Left m
                    Nothing -> return $ Right tm
                SubstWeak w s -> either (Left . weaken w) (Right . weaken w) <$> hsubstTm s tm
@@ -300,6 +324,17 @@ hsubstTm sub tm =
                SubstRefl   -> return $ Right tm
                SubstWeak w s -> either (Left . weaken w) (Right . weaken w) <$> hsubstTm s tm
                _ -> error "impossible"
+
+           Project r fld ->
+             case sub of
+               SubstRefl -> return $ Right tm
+               _ -> do
+                 r' <- hsubstTm sub r
+                 case r' of
+                   Left m' ->
+                     Left <$> goproj WeakRefl m' fld
+                   Right r'' ->
+                     Right <$> foldLF (Project r'' fld)
 
            App r1 m2 -> do
              case sub of
@@ -314,6 +349,16 @@ hsubstTm sub tm =
                     Right <$> foldLF (App r1'' m2')
 
  where
+  goproj :: forall γ. Weakening γ γ' -> f γ TERM -> LFRecordIndex f -> m (f γ' TERM)
+  goproj w x' fld =
+    case unfoldLF x' of
+      Weak w' x'' -> goproj (weakCompose w w') x'' fld
+      Record flds ->
+        case Map.lookup fld flds of
+          Just m -> return $ weaken w m
+          Nothing -> fail "hereditary substituion failed: ill-typed record projection"
+      _ -> fail "hereditary substituion failed: ill-typed record projection"
+
   gosub :: forall γ₁ γ₂. Weakening γ₁ γ' -> Weakening γ₂ γ' -> f γ₁ TERM -> f γ₂ TERM -> m (f γ' TERM)
   gosub w1 w2 x' y' =
    case (unfoldLF x', unfoldLF y') of
@@ -324,4 +369,4 @@ hsubstTm sub tm =
             weaken wcommon <$>
               let sub' = SubstApply (SubstWeak w1' SubstRefl) (weaken w2' y') in
               hsubst sub' m
-     _ -> fail "hereditary substitution failed: ill-typed term"
+     _ -> fail "hereditary substitution failed: ill-typed function application"

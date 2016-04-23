@@ -6,6 +6,11 @@ import qualified Data.Set as Set
 import Lang.LF.Internal.Model
 
 
+-- | A sequence of hypotheses, giving types to the free variables in γ.
+data LFHyps (f :: Ctx * -> SORT -> *) (γ :: Ctx *) where
+  HNil   :: LFHyps f E
+  HCons  :: !(LFHyps f γ) -> !Quant -> !String -> !(f γ TYPE) -> LFHyps f (γ ::> b)
+
 getName :: Set String
         -> String
         -> String
@@ -16,13 +21,13 @@ getName ss nm = tryName ss (nm : [ nm++show i | i <- [0..] ])
     | otherwise = x
   tryName _ [] = undefined
 
-freshName :: (?nms :: Set String)
-          => String
+freshName :: Set String
           -> String
-freshName nm = getName ?nms nm
+          -> String
+freshName nms nm = getName nms nm
 
 lookupHyp :: LFModel f m
-          => Hyps f γ
+          => LFHyps f γ
           -> Var γ
           -> Weakening γ γ'
           -> (String, Quant, f γ' TYPE)
@@ -33,14 +38,15 @@ lookupHyp (HCons h _ _ _) (F x) w =
 lookupHyp HNil _ _ = error "impossible"
 
 lookupVar :: LFModel f m
-          => Hyps f γ
+          => LFHyps f γ
           -> Var γ
           -> (String, Quant, f γ TYPE)
 lookupVar h v = lookupHyp h v WeakRefl
 
-extendHyps :: Hyps f γ -> String -> Quant -> f γ TYPE -> Hyps f (γ ::> b)
+extendHyps :: LFHyps f γ -> String -> Quant -> f γ TYPE -> LFHyps f (γ ::> b)
 extendHyps h nm q a = HCons h q nm a
 
+{-
 inEmptyCtx :: ((?nms :: Set String, ?hyps :: Hyps f E) => a)
            -> a
 inEmptyCtx f =
@@ -59,3 +65,4 @@ extendCtx nm q a f =
   let ?nms = Set.insert nm' ?nms in
   let ?hyps = extendHyps ?hyps nm' q a in
   f
+-}
