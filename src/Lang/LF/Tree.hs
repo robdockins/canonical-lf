@@ -1,46 +1,30 @@
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE PatternGuards #-}
-{-# LANGUAGE ViewPatterns #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE FunctionalDependencies #-}
-
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Lang.LF.Tree
 ( LFTree
-, Signature(..)
-, SigDecl(..)
-, runM
-, buildSignature
-, emptySig
 , M
+, runM
 , mkTerm
 )
 where
 
+import           Control.Monad.Identity
 import           Control.Monad.Except
 import           Control.Monad.Reader
 import           Control.Monad.State
---import qualified Data.Foldable as Fold
+import           Data.Foldable
 import           Data.Map (Map)
 import qualified Data.Map as Map
---import           Data.Set (Set)
+import           Data.Set (Set)
 import qualified Data.Set as Set
---import           Data.Sequence (Seq, (|>))
---import qualified Data.Sequence as Seq
+import           Data.Sequence (Seq, (|>))
+import qualified Data.Sequence as Seq
 
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
 import Lang.LF.Internal.Basics
-import Lang.LF.Internal.Hyps
+import qualified Lang.LF.Internal.Hyps as H
 import Lang.LF.Internal.Model
 import Lang.LF.Internal.Print
 import Lang.LF.Internal.Solve
@@ -48,17 +32,15 @@ import Lang.LF.Internal.Subst
 import Lang.LF.Internal.Typecheck
 import Lang.LF.Internal.View
 
---import Lang.LF.ChangeT
-
 newtype LFTree a c γ (s::SORT) =
   LFTree { lfTree :: LF (LFTree a c) γ s
          }
 
 instance (Pretty a, Pretty c, Ord a, Ord c) => Show (LFTree a c E s) where
   show x =
-    runM emptySig (inEmptyCtx (let ?soln = Map.empty in displayLF x))
+    runM [] (inEmptyCtx (let ?soln = Soln Map.empty in displayLF x))
 
-type Soln a c = Map Integer (LFTree a c E TERM)
+
 
 data UVarState a c =
   UVarState
@@ -75,12 +57,33 @@ emptyUVarState =
   , uvarNext = 0
   }
 
-
 type instance LFTypeConst (LFTree a c) = a
 type instance LFConst (LFTree a c) = c
 type instance LFUVar (LFTree a c) = Integer
 type instance LFRecordIndex (LFTree a c) = String
-type instance LFSoln (LFTree a c) = Soln a c
+
+type Soln a c = Map Integer (LFTree a c E TERM)
+newtype instance LFSoln (LFTree a c) = Soln (Soln a c)
+
+data instance Hyps (LFTree a c) γ =
+  TreeHyps
+  { hypList :: H.LFHyps (LFTree a c) γ
+  , hypNms  :: Set String
+  } 
+
+emptyTreeHyps :: Hyps (LFTree a c) E
+emptyTreeHyps = TreeHyps H.HNil Set.empty
+
+extendTreeHyps :: Hyps (LFTree a c) γ
+              -> String
+              -> Quant
+              -> LFTree a c γ TYPE
+              -> Hyps (LFTree a c) (γ::>b)
+extendTreeHyps (TreeHyps h nms) nm q ty =
+  let nm'  = H.freshName nms nm
+      nms' = Set.insert nm' nms
+      h'   = H.extendHyps h nm' q ty
+   in TreeHyps h' nms'
 
 newtype M a c x = M { unM :: ReaderT (Signature a c) (StateT (UVarState a c) (Except String)) x }
 
@@ -105,7 +108,9 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
   validateGoal = validateGoalLF
   validateCon = validateConLF
 
-  alphaEq = alphaEqLF WeakRefl WeakRefl
+  alphaEqFull = alphaEqLF
+
+  evaluate = evaluateLF
 
   constKind a = M $ do
      sig <- ask
@@ -130,10 +135,10 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
 
   withCurrentSolution x = M $ do
     soln <- curSoln <$> get
-    let ?soln = soln in (unM x)
-  commitSolution soln = M $ modify (\s -> s{ curSoln = soln })
-  lookupUVar _ = Map.lookup
-  assignUVar _ v m soln = return $ Map.insert v m soln
+    let ?soln = Soln soln in (unM x)
+  commitSolution (Soln soln) = M $ modify (\s -> s{ curSoln = soln })
+  lookupUVar u (Soln soln) = Map.lookup u soln
+  assignUVar v m (Soln soln) = return $ Soln $ Map.insert v m soln
   uvarType u = M $ do
     tps <- uvarTypes <$> get
     case Map.lookup u tps of
@@ -146,46 +151,42 @@ instance (Pretty a, Pretty c, Ord a, Ord c)
          , uvarTypes = Map.insert n tp $ uvarTypes s
          }
     return n
-  extendSolution u tm soln =
+  emptySolution = Soln Map.empty
+  extendSolution u tm (Soln soln) =
     case Map.lookup u soln of
-      Nothing -> Just $ Map.insert u tm soln
+      Nothing -> Just $ Soln $ Map.insert u tm soln
       Just _  -> Nothing
 
   solve = solveLF
 
+  getSignature = M $ do
+    toList . sigDecls <$> ask
+
+  extendSignature [] m = m
+  extendSignature ((a ::. ty) : xs) m = M $ ReaderT $ \sig -> do
+    sig' <- lift $ addTypeConstant sig a ty
+    runReaderT (unM (extendSignature xs m)) sig'
+  extendSignature ((c :. tm) : xs) m = M $ ReaderT $ \sig -> do
+    sig' <- lift $ addTermConstant sig c tm
+    runReaderT (unM (extendSignature xs m)) sig'
+
   instantiate = instantiateLF
   abstractUVars = abstractLF
 
-{-
-dumpContextLF :: (Ord a, Ord c, Pretty a, Pretty c) => M a c Doc
-dumpContextLF = do
-   (_,ctx,_) <- ask
-   binds <- mapM dumpBind $ Fold.toList ctx
-   return $ vcat $ binds
- where dumpBind (nm,q,a) = do
-           adoc <- ppLF TopPrec a
-           return $ dumpq q <> text nm <+> text ":" <+> adoc
-       dumpq QPi  = text "Π"
-       dumpq QLam = text "λ"
-       dumpq QForall = text "∀"
-       dumpq QExists = text "∃"
-       dumpq QSigma = text "Σ"
--}
+  freshName nm = H.freshName (hypNms ?hyps) nm
+  inEmptyCtx x = let ?hyps = emptyTreeHyps in x
+  extendCtx nm q a x = let ?hyps = extendTreeHyps ?hyps nm q a in x
+  lookupCtx v = H.lookupHyp (hypList ?hyps) v WeakRefl
 
-infixr 0 ::.
-infixr 0 :.
-
-data SigDecl a c
-  = a ::. M a c (LFTree a c E KIND)
-  | c :.  M a c (LFTree a c E TYPE)
 
 emptySig :: Signature a c
-emptySig = Sig Map.empty Map.empty
+emptySig = Sig Map.empty Map.empty Seq.empty
 
 data Signature a c
   = Sig
     { sigFamilies :: Map a (LFTree a c E KIND)
     , sigTerms    :: Map c (LFTree a c E TYPE)
+    , sigDecls    :: Seq (SigDecl (LFTree a c) Identity)
     }
 
 addTypeConstant :: (Ord a, Ord c, Pretty a, Pretty c)
@@ -196,13 +197,13 @@ addTypeConstant :: (Ord a, Ord c, Pretty a, Pretty c)
 addTypeConstant sig nm m =
   case Map.lookup nm (sigFamilies sig) of
     Just _ -> fail $ unwords ["Type constant",show (pretty nm),"declared multiple times"]
-    Nothing -> flip evalStateT emptyUVarState $ flip runReaderT sig $ do
+    Nothing -> flip evalStateT emptyUVarState $ flip runReaderT sig $ inEmptyCtx $ do
            k <- unM m
-           let ?nms = Set.empty
-           let ?hyps = HNil
-           let ?soln = Map.empty
+           let ?soln = Soln Map.empty
            unM $ validateKind WeakRefl k
-           return sig{ sigFamilies = Map.insert nm k (sigFamilies sig) }
+           return sig{ sigFamilies = Map.insert nm k (sigFamilies sig)
+                     , sigDecls = sigDecls sig |> (nm ::. return k)
+                     }
 
 addTermConstant :: (Ord a, Ord c, Pretty a, Pretty c)
                 => Signature a c
@@ -212,42 +213,36 @@ addTermConstant :: (Ord a, Ord c, Pretty a, Pretty c)
 addTermConstant sig nm m =
   case Map.lookup nm (sigTerms sig) of
     Just _ -> fail $ unwords ["Term constant",show (pretty nm),"declared multiple times"]
-    Nothing -> flip evalStateT emptyUVarState $ flip runReaderT sig $ do
+    Nothing -> flip evalStateT emptyUVarState $ flip runReaderT sig $ inEmptyCtx $ do
            x <- unM m
-           let ?nms = Set.empty
-           let ?hyps = HNil
-           let ?soln = Map.empty
+           let ?soln = Soln Map.empty
            unM $ validateType WeakRefl x
-           return sig{ sigTerms = Map.insert nm x (sigTerms sig) }
+           return sig{ sigTerms = Map.insert nm x (sigTerms sig)
+                     , sigDecls = sigDecls sig |> (nm :. return x)
+                     }
 
-buildSignature :: (Ord a, Ord c, Pretty a, Pretty c)
-               => ((?hyps :: Hyps (LFTree a c) E, ?nms :: Set.Set String)
-                    => [SigDecl a c])
-               -> Signature a c
-buildSignature decls =
-   either error id $ runExcept $ foldM f emptySig $ inEmptyCtx decls
- where f sig (a ::. x) = addTypeConstant sig a x
-       f sig (c :. x)  = addTermConstant sig c x
-
-runM :: Signature a c
+runM :: (Ord a, Ord c, Pretty a, Pretty c)
+     => [SigDecl (LFTree a c) (M a c)]
      -> ((?soln :: LFSoln (LFTree a c)) => M a c x)
      -> x
 runM sig m =
-  let ?soln = Map.empty in
-  either error id $ runExcept $ flip evalStateT emptyUVarState $ flip runReaderT sig $ unM m
+  let ?soln = Soln Map.empty in
+  either error id
+    $ runExcept
+    $ flip evalStateT emptyUVarState
+    $ flip runReaderT emptySig
+    $ unM
+    $ extendSignature sig m
 
 mkTerm :: (Ord a, Ord c, Pretty a, Pretty c)
-       => Signature a c
+       => [SigDecl (LFTree a c) (M a c)]
        -> (( ?soln :: LFSoln (LFTree a c)
            , ?hyps :: Hyps (LFTree a c) E
-           , ?nms  :: Set.Set String
            )
             => M a c (LFTree a c E TERM))
        -> LFTree a c E TERM
 mkTerm sig m = runM sig $ inEmptyCtx $ do
-    let ?nms = Set.empty
-    let ?hyps = HNil
-    let ?soln = Map.empty
+    let ?soln = Soln Map.empty
     m' <- m
     _ <- inferType WeakRefl m'
     return m'

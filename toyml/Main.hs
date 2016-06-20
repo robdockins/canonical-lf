@@ -21,9 +21,9 @@ main = do
   print (errs, mast)
   case mast of
     Nothing -> putStrLn "Parse failed"
-    Just ast -> inEmptyCtx $ do
+    Just ast -> do
       let mlTerm  = mkTerm sig $ scopeAnalysis Map.empty ast
-      let g       = runM sig $ inEmptyCtx $ runTC mlTerm
+      let g       = runM sig $ runTC mlTerm
       let cpsTerm = mkTerm sig $ tailcps_ml mlTerm =<< "halt"
       let x       = mkTerm sig $ do
                       let ?ischeap = InlineHeuristic (\_ -> True)

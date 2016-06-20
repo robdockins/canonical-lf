@@ -2,11 +2,10 @@
 
 module Lang.LF.Internal.Subst where
 
-import Data.Proxy
 import qualified Data.Map.Strict as Map
 
 import Lang.LF.ChangeT
-import Lang.LF.Internal.Build
+import Lang.LF.Internal.Basics
 import Lang.LF.Internal.Model
 import Lang.LF.Internal.Solve
 import Lang.LF.Internal.Weak
@@ -62,7 +61,8 @@ instantiateLF tm =
     TyPi nm t1 t2 -> onChange tm foldLF (TyPi nm <$> instantiate t1 <*> instantiate t2)
     TyConst _ -> Unchanged tm
     TyApp t m -> onChange tm foldLF (TyApp <$> instantiate t <*> instantiate m)
-    TyRecord flds -> onChange tm foldLF (TyRecord <$> traverse instantiate flds)
+    TyRecord row -> onChange tm foldLF (TyRecord <$> instantiate row)
+    TyRow _ -> Unchanged tm
 
     ATerm x ->
       case go x of
@@ -70,7 +70,11 @@ instantiateLF tm =
         Right m -> Changed m
     Lam nm ty m -> onChange tm foldLF (Lam nm <$> instantiate ty <*> instantiate m)
     Record flds -> onChange tm foldLF (Record <$> traverse instantiate flds)
-
+    RecordModify r dels ins -> onChange tm foldLF
+        (RecordModify <$> instantiate r <*> return dels <*> traverse instantiate ins)
+    Row flds    -> onChange tm foldLF (Row <$> traverse instantiate flds)
+    RowModify r dels ins -> onChange tm foldLF
+        (RowModify <$> instantiate r <*> return dels <*> traverse instantiate ins)
 
     Var -> Unchanged tm
     Const _ -> Unchanged tm
@@ -126,7 +130,7 @@ instantiateLF tm =
           (Right m1', Unchanged _) -> Right (app m1' (return m2))
           (Right m1', Changed m2') -> Right (app m1' m2')
       UVar u
-        | Just tm <- lookupUVar Proxy u ?soln -> Right (runChangeT $ instantiate tm)
+        | Just tm <- lookupUVar u ?soln -> Right (runChangeT $ instantiate tm)
         | otherwise -> Left atm
 
 
@@ -161,13 +165,20 @@ abstractLF abs tm =
 
     AType x      -> foldLF =<< (AType <$> abstractUVars abs x)
     TyPi nm a a' -> foldLF =<< (TyPi nm <$> abstractUVars abs a <*> abstractUVars abs' a')
-    TyRecord flds -> foldLF =<< (TyRecord <$> traverse (abstractUVars abs) flds)
+    TyRecord row -> foldLF =<< (TyRecord <$> abstractUVars abs row)
+    TyRow fldSet -> foldLF (TyRow fldSet)
 
     TyConst _ -> return $ weaken (absWeaken abs) tm
 
     TyApp p m    -> foldLF =<< (TyApp <$> abstractUVars abs p <*> abstractUVars abs m)
     Lam nm a m   -> foldLF =<< (Lam nm <$> abstractUVars abs a <*> abstractUVars abs' m)
     Record flds  -> foldLF =<< (Record <$> traverse (abstractUVars abs) flds)
+    RecordModify r del ins -> foldLF =<<
+       (RecordModify <$> abstractUVars abs r <*> return del <*> traverse (abstractUVars abs) ins)
+
+    Row flds     -> foldLF =<< (Row <$> traverse (abstractUVars abs) flds)
+    RowModify r del ins -> foldLF =<<
+       (RowModify <$> abstractUVars abs r <*> return del <*> traverse (abstractUVars abs) ins)
 
     And cs       -> foldLF . And =<< (mapM (abstractUVars abs) cs)
 
@@ -220,7 +231,8 @@ hsubstLF sub tm =
 
      AType x       -> foldLF =<< (AType <$> hsubst sub x)
      TyPi nm a a'  -> foldLF =<< (TyPi nm <$> hsubst sub a <*> hsubst sub' a')
-     TyRecord flds -> foldLF =<< (TyRecord <$> traverse (hsubst sub) flds)
+     TyRecord row  -> foldLF =<< (TyRecord <$> hsubst sub row)
+     TyRow fldSet  -> foldLF (TyRow fldSet)
 
      TyConst _ ->
         case sub of
@@ -233,6 +245,20 @@ hsubstLF sub tm =
      Lam nm a m   -> foldLF =<< (Lam nm <$> hsubst sub a <*> hsubst sub' m)
 
      Record flds -> foldLF =<< (Record <$> traverse (hsubst sub) flds)
+     RecordModify r del ins -> do
+        x    <- hsubstTm sub r
+        ins' <- traverse (hsubst sub) ins
+        case x of
+          Left m -> recordModify m WeakRefl del ins'
+          Right r' -> foldLF (RecordModify r' del ins')
+
+     Row flds    -> foldLF =<< (Row <$> traverse (hsubst sub) flds)
+     RowModify r del ins -> do
+        x    <- hsubstTm sub r
+        ins' <- traverse (hsubst sub) ins
+        case x of
+          Left m -> rowModify m WeakRefl del ins'
+          Right r' -> foldLF (RowModify r' del ins')
 
      And cs       -> foldLF . And =<< (mapM (hsubst sub) cs)
 
@@ -263,6 +289,7 @@ hsubstLF sub tm =
   f (Left r)  = return $ extractATerm r
   f (Right r) = return r
 
+
 {- FIXME? rewrite this in continuation passing form
     to avoid repeated matching on Either values. -}
 hsubstTm :: forall m f γ γ'
@@ -286,7 +313,7 @@ hsubstTm sub tm =
            UVar u ->
              case sub of
                SubstRefl ->
-                 case lookupUVar Proxy u ?soln of
+                 case lookupUVar u ?soln of
                    Just m  -> return $ Left m
                    Nothing -> return $ Right tm
                SubstWeak w s -> either (Left . weaken w) (Right . weaken w) <$> hsubstTm s tm

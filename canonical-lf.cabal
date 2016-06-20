@@ -13,8 +13,9 @@ library
   hs-source-dirs: src
   exposed-modules:
     Lang.LF
-    Lang.LF.Tree
     Lang.LF.ChangeT
+    Lang.LF.DAG
+    Lang.LF.Tree
   other-modules:
     Lang.LF.Internal.Basics
     Lang.LF.Internal.Build
@@ -32,6 +33,7 @@ library
     ansi-wl-pprint,
     bound >= 1.0.6,
     containers,
+    hashable,
     mtl,
     text,
     transformers

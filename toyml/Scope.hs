@@ -1,6 +1,5 @@
 module Scope where
 
-import           Data.Set (Set)
 import           Data.Map (Map)
 import qualified Data.Map as Map
 
@@ -12,7 +11,6 @@ import Terms
 scopeAnalysis
   :: (LiftClosed γ
      , ?hyps :: Hyps LF γ
-     , ?nms :: Set String
      )
   => Map String (LF γ TERM)
   -> AST

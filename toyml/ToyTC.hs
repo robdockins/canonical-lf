@@ -35,7 +35,6 @@ addConstraint c = do
 --   with fresh unification variables.
 instantiateScheme
    :: ( ?hyps :: H γ
-      , ?nms :: Set String
       , ?soln :: LFSoln LF
       )
    => Subst LF γ E
@@ -67,7 +66,6 @@ subFreeUVars (SubstApply s a) = Set.union (subFreeUVars s) (freeUVars a)
 
 generalize
    :: ( ?hyps :: H γ
-      , ?nms :: Set String
       , ?soln :: LFSoln LF
       )
    => Subst LF γ E
@@ -113,7 +111,6 @@ generalize sub t = do
 tc :: ( LiftClosed γ
       , ?hyps :: H γ
       , ?soln :: LFSoln LF
-      , ?nms :: Set String
       )
    => Subst LF γ E
    -> LF γ TERM

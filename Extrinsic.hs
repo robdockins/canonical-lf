@@ -6,29 +6,27 @@ import Prelude hiding (pi, abs)
 
 import Control.Monad.Trans.Class
 import Control.Monad.State
---import           Data.Sequence (Seq, (|>))
---import qualified Data.Sequence as Seq
-import           Data.Set (Set)
---import qualified Data.Set as Set
---import           Data.Map (Map)
---import qualified Data.Map as Map
+import qualified Data.Sequence as Seq
 import           System.IO
 import           Text.PrettyPrint.ANSI.Leijen hiding ((<$>))
 
 import           Lang.LF
 import           Lang.LF.ChangeT
-import           Lang.LF.Tree hiding (M)
-import qualified Lang.LF.Tree as Tree
+import           Lang.LF.DAG hiding (M)
+import qualified Lang.LF.DAG as DAG
+--import           Lang.LF.Tree hiding (M)
+--import qualified Lang.LF.Tree as Tree
 
 --import qualified Debug.Trace as Debug
 
-type LF = Tree.LFTree String String
-type Sig = Tree.Signature String String
-type M = Tree.M String String
+--type LF = Tree.LFTree String String
+--type M = Tree.M String String
+type LF = DAG.LFDag String String String
+type M = DAG.M String String String
 type H = Hyps LF
 
-sig :: Sig
-sig = buildSignature
+sig :: [SigDecl LF M]
+sig = inEmptyCtx $
   [ -- STLC type formers
     "tp"      ::. lf_type
   , "arrow"    :. tp ==> tp ==> tp
@@ -69,7 +67,8 @@ sig = buildSignature
            (pi "x" tm $ \x ->
               typeof (var x) (var t2) ==> typeof (var f @@ var x) (var t))
            ==>
-           typeof (lam "x" (\x -> var f @@ var x)) (arrow (var t2) (var t))
+           typeof (lam "x" (\x -> var f @@ var x))
+                  (arrow (var t2) (var t))
   , "of_nat_elim" :.
          pi "t" tp $ \t ->
          pi "z" tm $ \z ->
@@ -140,6 +139,18 @@ sig = buildSignature
   , "B" :. tp
   , "C" :. tp
   , "X" :. tp
+
+
+  , "test_row" :. rowTy ["asdf","qwerty","xyz"]
+  , "test_record" :. recordTy $
+     extendRow
+       (extendRow (tmConst "test_row")
+                      "asdf"
+                      (recordTy
+                         (row [("abc",tm ==> tm)
+                           ,("xyz",(tp ==> tm) ==> tm)
+                           ])))
+          "qwerty" tp
   ]
 
 
@@ -172,13 +183,10 @@ app :: LiftClosed γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TERM)
 app x y = tmConst "app" @@ x @@ y
 
 lam :: ( LiftClosed γ
-       , ?nms :: Set String
        , ?hyps :: Hyps LF γ
        )
    => String
-   -> (forall b. ( ?nms :: Set String
-                 , ?hyps :: Hyps LF (γ ::> b)
-                 )
+   -> (forall b. ( ?hyps :: Hyps LF (γ ::> b) )
          => Var (γ::>b) -> M (LF (γ::>b) TERM))
    -> M (LF γ TERM)
 lam nm f = tmConst "lam" @@ (λ nm tm f)
@@ -202,15 +210,15 @@ step :: LiftClosed γ => M (LF γ TERM) -> M (LF γ TERM) -> M (LF γ TYPE)
 step x x' = tyConst "step" @@ x @@ x'
 
 
-typing :: LF E TERM
-typing = mkTerm sig $
+typing :: M (LF E TERM)
+typing = inEmptyCtx $
   tmConst "of_lam" @@ nat @@ nat @@ λ"x" tm (\x -> suc (var x)) @@
      (λ"x" tm $ \x ->
        λ"prf" (typeof (var x) nat) $ \prf ->
          of_suc (var x) (var prf))
 
-typing2 :: LF E TERM
-typing2 = mkTerm sig $
+typing2 :: M (LF E TERM)
+typing2 = inEmptyCtx $
   tmConst "of_lam" @@ nat @@ (arrow nat nat) @@
       (λ"x" tm (\x -> lam "y" $ \y -> nat_elim (var x) (lam "n" (\n -> suc (var n))) (var y))) @@
       (λ"x" tm $ \x ->
@@ -245,8 +253,7 @@ pattern ArrowP t1 t2 <-
 
 cps :: forall γ
      . ( LiftClosed γ, ?soln :: LFSoln LF
-       , ?hyps :: H γ, ?nms :: Set String
-       )
+       , ?hyps :: H γ )
     => LF γ TERM
     -> M (LF γ TERM)
 
@@ -254,21 +261,21 @@ cps (LamP body) =
   λ "klam" (tm ==> tm) $ \k -> (var k) @@
      (lam "x" $ \x ->
        lam "k" $ \k ->
-           (cps =<< ((return $ weak $ weak $ weak body) @@ (weak <$> var x)))
+           (cps =<< ((return $ weak $ weak $ weak body) @@ (var' (F x))))
              @@
-             (λ "m" tm $ \m -> app (weak <$> var k) (var m)))
+             (λ "m" tm $ \m -> app (var' (F k)) (var' m)))
 
 cps (AppP x y) =
   λ "k" (tm ==> tm) $ \k ->
       cps (weak x) @@ (λ "m" tm $ \m ->
         cps (weak $ weak $ y) @@ (λ "n" tm $ \n ->
-          (weak <$> var m) `app`
+          (var' (F m)) `app`
           (var n) `app`
-          (lam "q" $ \q -> (weak . weak . weak <$> var k) @@ var q)))
+          (lam "q" $ \q -> (var' (F $ F $ F k) @@ var q))))
 
 cps (SucP x) =
   λ "k" (tm ==> tm) $ \k ->
-    cps (weak x) @@ (λ "n" tm $ \n -> (weak <$> var k) @@ suc (var n))
+    cps (weak x) @@ (λ "n" tm $ \n -> (var' (F k)) @@ suc (var n))
 
 cps (termView -> VConst "f" []) =
   λ "k" (tm ==> tm) $ \k ->
@@ -297,7 +304,7 @@ addConstraint c = do
    modify (x:)
 
 tc :: ( LiftClosed γ, ?soln :: LFSoln LF
-      , ?hyps :: H γ, ?nms :: Set String)
+      , ?hyps :: H γ)
    => Subst LF γ E
    -> LF γ TERM
    -> StateT [LF E CON] M (LF E TERM)
@@ -380,7 +387,7 @@ runTC tm = withCurrentSolution $ inEmptyCtx $ do
 
 
 -- CBV reduction to head-normal form
-eval :: (?nms :: Set String, ?hyps :: H γ, LiftClosed γ, ?soln :: LFSoln LF)
+eval :: (?hyps :: H γ, LiftClosed γ, ?soln :: LFSoln LF)
      => LF γ TERM
      -> ChangeT M (LF γ TERM)
 
@@ -418,10 +425,10 @@ eval t = Unchanged t
 
 
 five :: M (LF E TERM)
-five = inEmptyCtx $ suc $ suc $ suc $ suc $ suc $ zero
+five = suc $ suc $ suc $ suc $ suc $ zero
 
 three :: M (LF E TERM)
-three = inEmptyCtx $ suc $ suc $ suc $ zero
+three = suc $ suc $ suc $ zero
 
 add :: M (LF E TERM)
 add = inEmptyCtx $
@@ -448,32 +455,80 @@ g = liftClosed <$> tmConst "g"
 h :: LiftClosed γ => M (LF γ TERM)
 h = liftClosed <$> tmConst "h"
 
-testTerm :: LF E TERM
-testTerm = mkTerm sig $
-  add `app` three `app` five
 
+data BaseVal
+ = VUnit
+ | VInt Integer
+
+prettyBaseVal :: BaseVal -> Doc
+prettyBaseVal VUnit    = text "()"
+prettyBaseVal (VInt n) = text (show n)
+
+instance Show (LFVal LF M BaseVal) where
+  show = show . prettyValue prettyBaseVal
+
+evalAlg :: LFAlgebra LF M BaseVal
+evalAlg "tt"        []                  = return $ ValBase $ VUnit
+evalAlg "zero"      []                  = return $ ValBase $ VInt 0
+evalAlg "suc"       [ValBase (VInt n)]  = return $ ValBase $ VInt (n+1)
+evalAlg "lam"       [f]                 = return f
+evalAlg "app"       [ValLam f, x]       = f x
+evalAlg "F"         []                  = return $ ValLam (\_ -> return $ ValBase VUnit)
+evalAlg "X"         []                  = return $ ValBase $ VInt 42
+evalAlg "nat_elim"  [z, ValLam s, ValBase (VInt n)] =
+   let rec_nat x
+          | x <= 0    = return z
+          | otherwise = s =<< rec_nat (x-1)
+    in rec_nat n
+
+evalAlg c args =
+  fail $ unwords ["Unknown constant:", show c, show args]
+
+compute :: LF E TERM -> M (LFVal LF M BaseVal)
+compute t = do
+  let ?soln = emptySolution
+  evaluate evalAlg t Seq.empty
+
+testTerm :: M (LF E TERM)
+testTerm = inEmptyCtx $
+  --add `app` three `app` five
   --composeN `app` (lam "q" $ \q -> tmConst "F" `app` var q) `app` three `app` tt
-
   --lam "x" $ \x -> (f `app` var x) `app` (g `app` (h `app` var x))
-
   --lam "x" $ \x -> g `app` (h `app` var x)
 
-evalTerm :: LF E TERM
-evalTerm = mkTerm sig $ runChangeT $ eval testTerm
+  (extendRecord
+    (extendRecord (record [("asdf", add `app` three `app` five),("row",row [("xxx",tp),("yyy",tm)] ) ])
+      "qwerty" (tmConst "X"))
+        "xzcvb" (λ "x" tm $ \x -> app (tmConst "F") (var x)))
 
-cpsTerm :: LF E TERM
-cpsTerm = mkTerm sig $ do
-      x <- cps testTerm @@ (λ "z" tm $ \z -> var z)
-      return x
-      --runChangeT $ eval x
 
-main = inEmptyCtx $ do
-   let x :: LF E TERM
-       x = typing2 --evalTerm
-   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ ppLF TopPrec WeakRefl x
-   putStrLn ""
-   displayIO stdout $ renderSmart 0.7 80 $ runM sig $ (ppLF TopPrec WeakRefl =<< inferType WeakRefl x)
-   putStrLn ""
+evalTerm :: M (LF E TERM)
+evalTerm = inEmptyCtx $ withCurrentSolution $
+  (runChangeT . eval) =<< testTerm
+
+cpsTerm :: M (LF E TERM)
+cpsTerm = inEmptyCtx $ withCurrentSolution $ do
+      x <- testTerm
+      cps x @@ (λ "z" tm $ \z -> var z)
+
+main = inEmptyCtx $ runM sig $ do
+   x <- testTerm
+   sigdoc <- prettySignature
+   xdoc   <- ppLF TopPrec WeakRefl x
+   tpdoc  <- ppLF TopPrec WeakRefl =<< inferType WeakRefl x
+   xval   <- compute x
+
+   liftIO $ do
+     displayIO stdout $ renderSmart 0.7 80 $ sigdoc
+     putStrLn ""
+     putStrLn ""
+
+     displayIO stdout $ renderSmart 0.7 80 $ xdoc
+     putStrLn ""
+     displayIO stdout $ renderSmart 0.7 80 $ tpdoc
+     putStrLn ""
+
+     print xval
 
    -- let g :: LF E GOAL
    --     g = runM sig $ runTC x

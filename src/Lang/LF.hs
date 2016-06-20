@@ -14,9 +14,8 @@ module Lang.LF
 , LFConst
 , LFUVar
 , LFSoln
-
+, Hyps
 , Var(..)
-, Hyps(..)
 , Quant(..)
 , LiftClosed(..)
 , AutoWeaken
@@ -31,6 +30,8 @@ module Lang.LF
 , weakSubst
 , withCurrentSolution
 , commitSolution
+, extendSolution
+, emptySolution
 , lookupSubst
 , mapF
 , freeVar
@@ -38,6 +39,10 @@ module Lang.LF
 , freeUVars
 , Abstraction(..)
 , abstractUVars
+, SigDecl(..)
+, extendSignature
+, getSignature
+, prettySignature
 
   -- * Term views
 , KindView(..)
@@ -67,6 +72,12 @@ module Lang.LF
 , Prec(..)
 , displayLF
 
+  -- * Evaluation
+, LFAlgebra
+, LFVal(..)
+, evaluate
+, prettyValue
+
   -- * Term Construction
 , weak
 , weaken
@@ -79,14 +90,23 @@ module Lang.LF
 , tyArrow
 , λ
 , var
+, var'
 , uvar
 , tmConst
+, mkVar
 , mkLam
 , mkSigma
 , mkRecord
-, mkTyRecord
 , record
-, tyRecord
+, extendRecord
+, restrictRecord
+, updateRecord
+, rowTy
+, recordTy
+, row
+, extendRow
+, restrictRow
+, updateRow
 , project
 , unify
 , conj

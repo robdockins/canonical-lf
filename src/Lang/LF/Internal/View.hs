@@ -1,13 +1,10 @@
 module Lang.LF.Internal.View where
 
-import Data.Set (Set)
-
 import Lang.LF.Internal.Model
-import Lang.LF.Internal.Hyps
 import Lang.LF.Internal.Weak
 
 kindViewLF :: forall f m γ γ'
-            . (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ)
+            . (LFModel f m, ?hyps :: Hyps f γ)
            => Weakening γ' γ
            -> f γ' KIND
            -> KindView f m γ
@@ -22,7 +19,7 @@ kindViewLF w k =
        extendCtx nm QPi a' $ VKPi nm B a' k'
 
 typeViewLF :: forall f m γ γ'
-            . (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ)
+            . (LFModel f m, ?hyps :: Hyps f γ)
            => Weakening γ' γ
            -> f γ' TYPE
            -> TypeView f m γ
@@ -37,8 +34,8 @@ typeViewLF w a =
       let a2' = weaken (WeakSkip w) a2 in
       extendCtx nm QPi a1' $
         VTyPi nm B a1' a2'
-    TyRecord flds ->
-      VTyRecord (fmap (weaken w) flds)
+    TyRecord row -> VTyRecord (weaken w row)
+    TyRow _ -> error "FIXME: implement TyRow view"
 
   where go :: forall γ γ'
             . Weakening γ' γ
@@ -52,8 +49,7 @@ typeViewLF w a =
             TyApp p m -> go w (weaken w m : args) p
 
 termViewLF :: forall f m γ γ'
-            . (LFModel f m, ?nms :: Set String
-              , ?hyps :: Hyps f γ, ?soln :: LFSoln f)
+            . (LFModel f m, ?hyps :: Hyps f γ, ?soln :: LFSoln f)
            => Weakening γ' γ
            -> f γ' TERM
            -> TermView f m γ
@@ -71,6 +67,10 @@ termViewLF w m =
       extendCtx nm QLam a' $
         VLam nm B a' body'
 
+    Row{} -> error "FIXME: implement row view"
+    RowModify{} -> error "FIXME: implement row modify view"
+    RecordModify{} -> error "FIXME: implement record modify view"
+
  where go :: forall γ γ'
            . Weakening γ' γ
            -> [f γ TERM]
@@ -87,7 +87,7 @@ termViewLF w m =
 
 
 constraintViewLF :: forall f m γ γ'
-            . (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ)
+            . (LFModel f m, ?hyps :: Hyps f γ)
            => Weakening γ' γ
            -> f γ' CON
            -> ConstraintView f m γ
@@ -109,7 +109,7 @@ constraintViewLF w c =
          VExists nm B a' c'
 
 goalViewLF :: forall f m γ γ'
-            . (LFModel f m, ?nms :: Set String, ?hyps :: Hyps f γ)
+            . (LFModel f m, ?hyps :: Hyps f γ)
            => Weakening γ' γ
            -> f γ' GOAL
            -> GoalView f m γ
